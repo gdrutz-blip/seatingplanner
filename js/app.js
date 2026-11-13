@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const { hasSeat, seatId, listSeats, solve, shuffle } = window.SeatSolver;
+  const { hasSeat, endCell, isHoriz, seatId, listSeats, solve, shuffle } = window.SeatSolver;
 
   const KEY = 'seatingplanner.v1';
   const ROOM_W = 32, ROOM_H = 20, SW = 3, SH = 2;
@@ -24,10 +24,7 @@
   function fill(el, ...kids) { el.replaceChildren(...kids.flat(Infinity).filter(k => k != null && k !== false)); }
 
   /* ---------------- state ---------------- */
-  function defaultLayout() {
-    const spots = [[1, 2], [11.5, 2], [22, 2], [6, 10], [17, 10]];
-    return { tables: spots.map(([x, y], i) => ({ id: uid(), num: i + 1, x, y, cols: 3, rows: 2 })) };
-  }
+  function defaultLayout() { return { tables: [] }; }
   function newClass(name) {
     return { id: uid(), name, students: [], layout: defaultLayout(), assignment: {}, rules: [], across: false, versions: [] };
   }
@@ -104,8 +101,21 @@
     for (const t of cls.layout.tables) {
       const w = t.cols * SW, hh = t.rows * SH;
       const tx = fx(t.x, w), ty = fy(t.y, hh);
-      const tEl = h('div', { class: 'table' + (o.mode === 'layout' && ui.selTable === t.id ? ' sel' : ''), 'data-table': t.id });
+      const e = endCell(t), horiz = isHoriz(t);
+      const tEl = h('div', { class: 'table' + (e ? ' hasend' : '') + (o.mode === 'layout' && ui.selTable === t.id ? ' sel' : ''), 'data-table': t.id });
       Object.assign(tEl.style, { left: U(tx), top: U(ty), width: U(w), height: U(hh) });
+      // Where the desk on the end sits: centred across the end of the table.
+      const ex = e && (horiz ? t.x + e.c * SW : t.x + (w - SW) / 2);
+      const ey = e && (horiz ? t.y + (hh - SH) / 2 : t.y + e.r * SH);
+      if (e) {
+        const gx = t.x + (horiz && t.end === 'first' ? SW : 0), gy = t.y + (!horiz && t.end === 'first' ? SH : 0);
+        const gw = horiz ? w - SW : w, gh = horiz ? hh : hh - SH;
+        for (const [x, y, ww, h2] of [[gx, gy, gw, gh], [ex, ey, SW, SH]]) {
+          const part = h('div', { class: 'tpart' });
+          Object.assign(part.style, { left: U(fx(x, ww) - tx), top: U(fy(y, h2) - ty), width: U(ww), height: U(h2) });
+          tEl.append(part);
+        }
+      }
       const lab = h('div', { class: 'tlabel' }, tableName(t));
       Object.assign(lab.style, { left: U(tx), top: U(ty - .9), width: U(w) });
       room.append(tEl, lab);
@@ -120,7 +130,9 @@
           class: 'seat' + (name ? '' : ' empty') + (ui.sel && ui.sel === sid && o.mode === 'seat' ? ' sel' : ''),
           'data-seat': id, draggable: o.mode === 'seat' && !!sid ? 'true' : null,
         }, inner);
-        Object.assign(sEl.style, { left: U(fx(t.x + c * SW, SW)), top: U(fy(t.y + r * SH, SH)), width: U(SW), height: U(SH) });
+        const isEnd = e && e.r === r && e.c === c;
+        const sx = isEnd ? ex : t.x + c * SW, sy = isEnd ? ey : t.y + r * SH;
+        Object.assign(sEl.style, { left: U(fx(sx, SW)), top: U(fy(sy, SH)), width: U(SW), height: U(SH) });
         room.append(sEl);
       }
     }
@@ -149,7 +161,7 @@
     const name = prompt('Name for the new class:');
     if (!name || !name.trim()) return;
     const c = newClass(name.trim());
-    if (confirm('Copy the desk layout from "' + cur().name + '"?\n(Cancel = start with the default layout)')) {
+    if (confirm('Copy the desk layout from "' + cur().name + '"?\n(Cancel = start with an empty room)')) {
       c.layout = clone(cur().layout);
     }
     state.classes.push(c); switchClass(c.id);
@@ -271,14 +283,17 @@
   /* Shape of a table: n desks, in `lines` rows, running across (or down if vert). */
   function shapeOf(t) {
     const vert = t.vert == null ? t.rows > t.cols : t.vert;
-    return { n: t.n == null ? t.cols * t.rows : t.n, lines: vert ? t.cols : t.rows, vert };
+    return { n: t.n == null ? t.cols * t.rows : t.n, lines: vert ? t.cols : t.rows, vert, end: t.end || '' };
   }
-  function setShape(t, n, lines, vert) {
+  function setShape(t, n, lines, vert, end) {
     n = Math.max(1, Math.min(24, n));
-    lines = Math.max(1, Math.min(4, lines, n));
-    const per = Math.ceil(n / lines);
-    lines = Math.ceil(n / per);
-    Object.assign(t, { n, vert, cols: vert ? lines : per, rows: vert ? per : lines });
+    if (n < 2) end = '';
+    const g = end ? n - 1 : n;
+    lines = Math.max(1, Math.min(4, lines, g));
+    const per = Math.ceil(g / lines);
+    lines = Math.ceil(g / per);
+    const span = per + (end ? 1 : 0);
+    Object.assign(t, { n, vert, end: end || undefined, cols: vert ? lines : span, rows: vert ? span : lines });
     clamp(t);
   }
   function renderLayout(cls) {
@@ -312,10 +327,13 @@
       h('p', { class: 'hint' }, 'Drag a table to move it. Click a table to select it, then change it below.'),
       t ? [
         h('h3', {}, 'Selected: ' + tableName(t)),
-        stepper('Desks', sh.n, v => setShape(t, v, sh.lines, sh.vert), 1, 24),
-        stepper('Rows of desks', sh.lines, v => setShape(t, sh.n, v, sh.vert), 1, Math.min(4, sh.n)),
+        stepper('Desks', sh.n, v => setShape(t, v, sh.lines, sh.vert, sh.end), 1, 24),
+        stepper('Rows of desks', sh.lines, v => setShape(t, sh.n, v, sh.vert, sh.end), 1, Math.min(4, sh.end ? sh.n - 1 : sh.n)),
         stepper('Table number', +t.num || 1, v => { t.num = v; }, 1, 99),
-        h('button', { onclick: () => { setShape(t, sh.n, sh.lines, !sh.vert); changed(); } }, 'Turn sideways'),
+        sh.n >= 2 && h('div', { class: 'row' }, h('label', {}, 'Desk on the end'),
+          h('select', { onchange: ev => { setShape(t, sh.n, sh.lines, sh.vert, ev.target.value); changed(); } },
+            [['', 'None'], ['last', 'One end'], ['first', 'Other end']].map(([v, l]) => h('option', { value: v, selected: v === sh.end }, l)))),
+        h('button', { onclick: () => { setShape(t, sh.n, sh.lines, !sh.vert, sh.end); changed(); } }, 'Turn sideways'),
         h('button', {
           onclick: () => {
             const nt = Object.assign(clone(t), { id: uid(), num: nextNum(), x: t.x + 1, y: t.y + 1 });
@@ -329,10 +347,12 @@
       ] : h('p', { class: 'hint' }, 'No table selected.'),
       h('h3', {}, 'Whole room'),
       h('button', {
+        class: 'danger', disabled: !cls.layout.tables.length,
         onclick: () => {
-          if (confirm('Replace this layout with 5 tables of 6? Students will be unseated.')) { cls.layout = defaultLayout(); ui.selTable = null; changed(); }
+          if (confirm('Remove every table from this room? Students will be unseated.')) { cls.layout = defaultLayout(); ui.selTable = null; changed(); }
         },
-      }, 'Reset to 5 tables of 6'),
+      }, 'Clear the room'),
+      !cls.layout.tables.length && h('p', { class: 'hint' }, 'The room is empty. Use the Add buttons above to put in desks.'),
     );
 
     const wrap = renderRoom(cls, { flip: ui.flip, mode: 'layout' });

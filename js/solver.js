@@ -5,13 +5,23 @@
   function seatId(t, r, c) { return t.id + ':' + r + ':' + c; }
 
   /* A table is a cols x rows grid. If t.n is set, only the first n cells hold a desk
-     (filled along the long side), which allows odd sizes such as 5. */
+     (filled along the long side), which allows odd sizes such as 5.
+     If t.end is 'last' or 'first', one of the n desks sits on its own at that end of
+     the table; it occupies a single cell in an extra line of the grid. */
+  const isHoriz = t => t.vert == null ? t.cols >= t.rows : !t.vert;
+  function endCell(t) {
+    if (!t.end) return null;
+    const first = t.end === 'first';
+    return isHoriz(t) ? { r: 0, c: first ? 0 : t.cols - 1 } : { r: first ? 0 : t.rows - 1, c: 0 };
+  }
   function hasSeat(t, r, c) {
     if (r < 0 || r >= t.rows || c < 0 || c >= t.cols) return false;
     if (t.n == null) return true;
-    return (t.vert ? c * t.rows + r : r * t.cols + c) < t.n;
+    if (!t.end) return (t.vert ? c * t.rows + r : r * t.cols + c) < t.n;
+    const e = endCell(t), off = t.end === 'first' ? 1 : 0;
+    if (isHoriz(t)) return c === e.c ? r === 0 : r * (t.cols - 1) + (c - off) < t.n - 1;
+    return r === e.r ? c === 0 : c * (t.rows - 1) + (r - off) < t.n - 1;
   }
-  const isHoriz = t => t.vert == null ? t.cols >= t.rows : !t.vert;
 
   function listSeats(layout) {
     const out = [];
@@ -23,22 +33,33 @@
   }
 
   /* "Beside" = next to each other along the long side of the table.
-     With across=true, the seat directly opposite also counts. */
+     With across=true, the seat directly opposite also counts.
+     A desk on the end is beside the desks it touches. */
   function adjacency(layout, across) {
     const adj = {};
     for (const t of layout.tables) {
-      const horiz = isHoriz(t);
+      const horiz = isHoriz(t), e = endCell(t);
+      const isEnd = (r, c) => !!e && e.r === r && e.c === c;
+      const grid = (r, c) => hasSeat(t, r, c) && !isEnd(r, c) && !(e && (horiz ? c === e.c : r === e.r));
       for (let r = 0; r < t.rows; r++) {
         for (let c = 0; c < t.cols; c++) {
-          if (!hasSeat(t, r, c)) continue;
+          if (!grid(r, c)) continue;
           const n = [];
-          const add = (rr, cc) => {
-            if (hasSeat(t, rr, cc)) n.push(seatId(t, rr, cc));
-          };
+          const add = (rr, cc) => { if (grid(rr, cc)) n.push(seatId(t, rr, cc)); };
           if (horiz || across) { add(r, c - 1); add(r, c + 1); }
           if (!horiz || across) { add(r - 1, c); add(r + 1, c); }
           adj[seatId(t, r, c)] = n;
         }
+      }
+      if (e) {
+        const eid = seatId(t, e.r, e.c), n = [];
+        const step = t.end === 'first' ? 1 : -1;
+        const lines = horiz ? t.rows : t.cols;
+        for (let i = 0; i < lines; i++) {
+          const r = horiz ? i : e.r + step, c = horiz ? e.c + step : i;
+          if (grid(r, c)) { n.push(seatId(t, r, c)); adj[seatId(t, r, c)].push(eid); }
+        }
+        adj[eid] = n;
       }
     }
     return adj;
@@ -156,7 +177,7 @@
     return { ok: false, reason: 'rules' };
   }
 
-  const api = { hasSeat, seatId, listSeats, adjacency, shuffle, solve };
+  const api = { hasSeat, endCell, isHoriz, seatId, listSeats, adjacency, shuffle, solve };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SeatSolver = api;
 })(typeof window !== 'undefined' ? window : globalThis);

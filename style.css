@@ -117,3 +117,7 @@ dialog::backdrop { background: rgba(20, 25, 35, .45); }
 #sidebar .row > button { flex: 1; }
 #sidebar .row label + button, #sidebar .row .stepval + button { flex: none; width: 34px; padding: 6px 0; }
 .stepval { width: 28px; text-align: center; }
+
+.table.hasend { background: none; border-color: transparent; }
+.tpart { position: absolute; background: var(--table); border: 1px solid #b9c1ce; border-radius: calc(var(--u) * .25); pointer-events: none; }
+.page .tpart { border-color: #555; }
