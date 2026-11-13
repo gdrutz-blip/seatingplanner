@@ -330,10 +330,21 @@
         stepper('Desks', sh.n, v => setShape(t, v, sh.lines, sh.vert, sh.end), 1, 24),
         stepper('Rows of desks', sh.lines, v => setShape(t, sh.n, v, sh.vert, sh.end), 1, Math.min(4, sh.end ? sh.n - 1 : sh.n)),
         stepper('Table number', +t.num || 1, v => { t.num = v; }, 1, 99),
-        sh.n >= 2 && h('div', { class: 'row' }, h('label', {}, 'Desk on the end'),
-          h('select', { onchange: ev => { setShape(t, sh.n, sh.lines, sh.vert, ev.target.value); changed(); } },
-            [['', 'None'], ['last', 'One end'], ['first', 'Other end']].map(([v, l]) => h('option', { value: v, selected: v === sh.end }, l)))),
-        h('button', { onclick: () => { setShape(t, sh.n, sh.lines, !sh.vert, sh.end); changed(); } }, 'Turn sideways'),
+        sh.n >= 2 && h('label', {}, h('input', {
+          type: 'checkbox', checked: !!sh.end,
+          onchange: ev => { setShape(t, sh.n, sh.lines, sh.vert, ev.target.checked ? 'last' : ''); changed(); },
+        }), ' One desk sticks out on the end'),
+        h('div', { class: 'row' },
+          // A quarter turn clockwise: the end desk goes right, bottom, left, top.
+          h('button', {
+            onclick: () => {
+              const end = sh.end && sh.vert ? (sh.end === 'last' ? 'first' : 'last') : sh.end;
+              setShape(t, sh.n, sh.lines, !sh.vert, end); changed();
+            },
+          }, 'Rotate'),
+          sh.end && h('button', {
+            onclick: () => { setShape(t, sh.n, sh.lines, sh.vert, sh.end === 'last' ? 'first' : 'last'); changed(); },
+          }, 'Flip')),
         h('button', {
           onclick: () => {
             const nt = Object.assign(clone(t), { id: uid(), num: nextNum(), x: t.x + 1, y: t.y + 1 });
