@@ -113,3 +113,7 @@ dialog::backdrop { background: rgba(20, 25, 35, .45); }
 .ruleform .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .picker { display: flex; flex-wrap: wrap; gap: 4px 12px; max-height: 150px; overflow: auto; padding: 8px; background: #fff; border: 1px solid var(--line); border-radius: 6px; }
 .picker label { white-space: nowrap; }
+
+#sidebar .row > button { flex: 1; }
+#sidebar .row label + button, #sidebar .row .stepval + button { flex: none; width: 34px; padding: 6px 0; }
+.stepval { width: 28px; text-align: center; }

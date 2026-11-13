@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  const { seatId, listSeats, solve, shuffle } = window.SeatSolver;
+  const { hasSeat, seatId, listSeats, solve, shuffle } = window.SeatSolver;
 
   const KEY = 'seatingplanner.v1';
   const ROOM_W = 32, ROOM_H = 20, SW = 3, SH = 2;
@@ -20,6 +20,8 @@
     for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
     return el;
   }
+
+  function fill(el, ...kids) { el.replaceChildren(...kids.flat(Infinity).filter(k => k != null && k !== false)); }
 
   /* ---------------- state ---------------- */
   function defaultLayout() {
@@ -108,6 +110,7 @@
       Object.assign(lab.style, { left: U(tx), top: U(ty - .9), width: U(w) });
       room.append(tEl, lab);
       for (let r = 0; r < t.rows; r++) for (let c = 0; c < t.cols; c++) {
+        if (!hasSeat(t, r, c)) continue;
         const id = seatId(t, r, c);
         const sid = asg[id];
         const name = sid ? studentName(cls, sid) : '';
@@ -215,7 +218,7 @@
     }, s.name)));
 
     const nSeats = listSeats(cls.layout).length;
-    $('sidebar').replaceChildren(
+    fill($('sidebar'), 
       h('h3', {}, `Not seated (${unseated.length})`), chips,
       h('p', { class: 'hint' }, 'Drag a name onto a seat, or click a name and then a seat. Drop one student on another to swap them.'),
       h('p', { class: 'hint' }, `${cls.students.length} students, ${nSeats} seats.`),
@@ -265,41 +268,64 @@
   }
 
   /* ---------------- layout tab ---------------- */
+  /* Shape of a table: n desks, in `lines` rows, running across (or down if vert). */
+  function shapeOf(t) {
+    const vert = t.vert == null ? t.rows > t.cols : t.vert;
+    return { n: t.n == null ? t.cols * t.rows : t.n, lines: vert ? t.cols : t.rows, vert };
+  }
+  function setShape(t, n, lines, vert) {
+    n = Math.max(1, Math.min(24, n));
+    lines = Math.max(1, Math.min(4, lines, n));
+    const per = Math.ceil(n / lines);
+    lines = Math.ceil(n / per);
+    Object.assign(t, { n, vert, cols: vert ? lines : per, rows: vert ? per : lines });
+    clamp(t);
+  }
   function renderLayout(cls) {
     const t = tableById(cls, ui.selTable);
     const changed = () => { prune(cls); save(); render(); };
-    const num = (label, key, min, max) => h('div', { class: 'row' }, h('label', {}, label),
-      h('input', {
-        type: 'number', min, max, value: t[key],
-        onchange: e => { t[key] = Math.max(min, Math.min(max, Math.round(+e.target.value) || min)); clamp(t); changed(); },
-      }));
-    $('sidebar').replaceChildren(
-      h('button', {
-        class: 'primary',
-        onclick: () => {
-          const n = Math.max(0, ...cls.layout.tables.map(x => +x.num || 0)) + 1;
-          const nt = { id: uid(), num: n, x: 1, y: 1, cols: 3, rows: 2 };
-          cls.layout.tables.push(nt); ui.selTable = nt.id; changed();
-        },
-      }, 'Add a table'),
-      h('p', { class: 'hint' }, 'Drag tables to move them. Click one to change its size. A single row of desks is a table that is 1 seat deep.'),
+    const nextNum = () => Math.max(0, ...cls.layout.tables.map(x => +x.num || 0)) + 1;
+    const addTable = (n, lines) => {
+      const nt = { id: uid(), num: nextNum(), x: 1, y: 1 };
+      setShape(nt, n, lines, false);
+      // Drop it in the first gap so it doesn't land on top of another table.
+      const hits = (x, y) => cls.layout.tables.some(o => x < o.x + o.cols * SW + .5 && o.x < x + nt.cols * SW + .5 &&
+        y < o.y + o.rows * SH + 1 && o.y < y + nt.rows * SH + 1);
+      search: for (let y = 1; y <= ROOM_H - nt.rows * SH; y++)
+        for (let x = .5; x <= ROOM_W - nt.cols * SW; x += .5)
+          if (!hits(x, y)) { nt.x = x; nt.y = y; break search; }
+      cls.layout.tables.push(nt); ui.selTable = nt.id; changed();
+    };
+    const stepper = (label, value, set, min, max) => h('div', { class: 'row' }, h('label', {}, label),
+      h('button', { disabled: value <= min, onclick: () => { set(value - 1); changed(); } }, '−'),
+      h('b', { class: 'stepval' }, String(value)),
+      h('button', { disabled: value >= max, onclick: () => { set(value + 1); changed(); } }, '+'));
+    const sh = t && shapeOf(t);
+    fill($('sidebar'), 
+      h('h3', {}, 'Add'),
+      h('div', { class: 'row' },
+        h('button', { onclick: () => addTable(1, 1) }, 'Single desk'),
+        h('button', { onclick: () => addTable(2, 1) }, 'Pair')),
+      h('div', { class: 'row' },
+        h('button', { onclick: () => addTable(4, 2) }, 'Group of 4'),
+        h('button', { onclick: () => addTable(6, 2) }, 'Group of 6')),
+      h('p', { class: 'hint' }, 'Drag a table to move it. Click a table to select it, then change it below.'),
       t ? [
-        h('h3', {}, 'Selected table'),
-        num('Table number', 'num', 1, 99),
-        num('Seats across', 'cols', 1, 8),
-        num('Seats deep', 'rows', 1, 8),
-        h('p', { class: 'hint' }, `${t.cols * t.rows} seats`),
+        h('h3', {}, 'Selected: ' + tableName(t)),
+        stepper('Desks', sh.n, v => setShape(t, v, sh.lines, sh.vert), 1, 24),
+        stepper('Rows of desks', sh.lines, v => setShape(t, sh.n, v, sh.vert), 1, Math.min(4, sh.n)),
+        stepper('Table number', +t.num || 1, v => { t.num = v; }, 1, 99),
+        h('button', { onclick: () => { setShape(t, sh.n, sh.lines, !sh.vert); changed(); } }, 'Turn sideways'),
         h('button', {
           onclick: () => {
-            const n = Math.max(0, ...cls.layout.tables.map(x => +x.num || 0)) + 1;
-            const nt = Object.assign(clone(t), { id: uid(), num: n, x: t.x + 1, y: t.y + 1 });
+            const nt = Object.assign(clone(t), { id: uid(), num: nextNum(), x: t.x + 1, y: t.y + 1 });
             clamp(nt); cls.layout.tables.push(nt); ui.selTable = nt.id; changed();
           },
-        }, 'Duplicate table'),
+        }, 'Duplicate'),
         h('button', {
           class: 'danger',
           onclick: () => { cls.layout.tables = cls.layout.tables.filter(x => x !== t); ui.selTable = null; changed(); },
-        }, 'Delete table'),
+        }, 'Delete'),
       ] : h('p', { class: 'hint' }, 'No table selected.'),
       h('h3', {}, 'Whole room'),
       h('button', {
@@ -369,7 +395,7 @@
     prune(cls);
   }
   function renderStudents(cls) {
-    $('sidebar').replaceChildren(
+    fill($('sidebar'), 
       h('h3', {}, 'Class list'),
       h('p', { class: 'hint' }, 'One student per line. You can paste a list from a spreadsheet column.'),
       h('p', { class: 'hint' }, 'Removing a line removes that student from their seat. Editing a name in place keeps their seat.'),
@@ -386,7 +412,7 @@
 
   /* ---------------- history tab ---------------- */
   function renderHistory(cls) {
-    $('sidebar').replaceChildren(
+    fill($('sidebar'), 
       h('h3', {}, 'Saved plans'),
       h('p', { class: 'hint' }, 'Each saved plan remembers the desk layout and who sat where. A plan is also saved automatically every time you shuffle.'),
       h('button', {
@@ -419,7 +445,7 @@
     if (!ui.printIds) ui.printIds = state.classes.map(c => c.id);
     ui.printIds = ui.printIds.filter(id => state.classes.some(c => c.id === id));
     const chosen = state.classes.filter(c => ui.printIds.includes(c.id));
-    $('sidebar').replaceChildren(
+    fill($('sidebar'), 
       h('h3', {}, 'Classes to print'),
       state.classes.map(c => h('label', {}, h('input', {
         type: 'checkbox', checked: ui.printIds.includes(c.id),

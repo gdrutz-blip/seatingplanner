@@ -4,12 +4,21 @@
 
   function seatId(t, r, c) { return t.id + ':' + r + ':' + c; }
 
+  /* A table is a cols x rows grid. If t.n is set, only the first n cells hold a desk
+     (filled along the long side), which allows odd sizes such as 5. */
+  function hasSeat(t, r, c) {
+    if (r < 0 || r >= t.rows || c < 0 || c >= t.cols) return false;
+    if (t.n == null) return true;
+    return (t.vert ? c * t.rows + r : r * t.cols + c) < t.n;
+  }
+  const isHoriz = t => t.vert == null ? t.cols >= t.rows : !t.vert;
+
   function listSeats(layout) {
     const out = [];
     for (const t of layout.tables)
       for (let r = 0; r < t.rows; r++)
         for (let c = 0; c < t.cols; c++)
-          out.push({ id: seatId(t, r, c), table: t.id, r, c });
+          if (hasSeat(t, r, c)) out.push({ id: seatId(t, r, c), table: t.id, r, c });
     return out;
   }
 
@@ -18,12 +27,13 @@
   function adjacency(layout, across) {
     const adj = {};
     for (const t of layout.tables) {
-      const horiz = t.cols >= t.rows;
+      const horiz = isHoriz(t);
       for (let r = 0; r < t.rows; r++) {
         for (let c = 0; c < t.cols; c++) {
+          if (!hasSeat(t, r, c)) continue;
           const n = [];
           const add = (rr, cc) => {
-            if (rr >= 0 && rr < t.rows && cc >= 0 && cc < t.cols) n.push(seatId(t, rr, cc));
+            if (hasSeat(t, rr, cc)) n.push(seatId(t, rr, cc));
           };
           if (horiz || across) { add(r, c - 1); add(r, c + 1); }
           if (!horiz || across) { add(r - 1, c); add(r + 1, c); }
@@ -146,7 +156,7 @@
     return { ok: false, reason: 'rules' };
   }
 
-  const api = { seatId, listSeats, adjacency, shuffle, solve };
+  const api = { hasSeat, seatId, listSeats, adjacency, shuffle, solve };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SeatSolver = api;
 })(typeof window !== 'undefined' ? window : globalThis);
