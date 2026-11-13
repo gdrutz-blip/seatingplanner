@@ -79,12 +79,14 @@
   function solve(opts) {
     const rnd = opts.rnd || Math.random;
     const students = opts.students.map(s => s.id);
-    const seats = listSeats(opts.layout);
+    const closed = new Set(opts.closed || []);
+    const seats = listSeats(opts.layout).filter(s => !closed.has(s.id));
     if (students.length > seats.length) return { ok: false, reason: 'seats' };
 
     const tableOf = {};
     seats.forEach(s => { tableOf[s.id] = s.table; });
     const adj = adjacency(opts.layout, !!opts.across);
+    for (const k in adj) adj[k] = adj[k].filter(q => !closed.has(q));
     const valid = new Set(students);
     const tableIds = new Set(opts.layout.tables.map(t => t.id));
     const allSeatIds = seats.map(s => s.id);
@@ -142,11 +144,51 @@
       return true;
     }
 
+    /* How many students each table should get so the tables come out as even as
+       possible: empty seats are taken one at a time from whichever table is fullest. */
+    const sizes = {};
+    for (const s of seats) sizes[s.table] = (sizes[s.table] || 0) + 1;
+    function evenCaps() {
+      const caps = Object.assign({}, sizes);
+      const ids = Object.keys(caps);
+      for (let e = seats.length - students.length; e > 0; e--) {
+        const max = Math.max(...ids.map(t => caps[t]));
+        const top = ids.filter(t => caps[t] === max);
+        caps[top[Math.floor(rnd() * top.length)]]--;
+      }
+      return caps;
+    }
+
+    /* Swap unconstrained students between tables to cut down on pairs who were
+       at the same table last time. Students named in a rule are never moved. */
+    function avoidRepeats(occ) {
+      const prev = opts.prev;
+      const free = students.filter(s => !constrained.has(s));
+      if (!prev || free.length < 2) return;
+      const where = {}, members = {};
+      for (const seat in occ) { where[occ[seat]] = seat; (members[tableOf[seat]] = members[tableOf[seat]] || new Set()).add(occ[seat]); }
+      const cost = (s, table, skip) => {
+        let n = 0;
+        if (prev[s] == null) return 0;
+        for (const m of members[table]) if (m !== s && m !== skip && prev[m] === prev[s]) n++;
+        return n;
+      };
+      for (let i = 0; i < 6000; i++) {
+        const a = free[Math.floor(rnd() * free.length)], b = free[Math.floor(rnd() * free.length)];
+        const ta = tableOf[where[a]], tb = tableOf[where[b]];
+        if (ta === tb) continue;
+        if (cost(a, tb, b) + cost(b, ta, a) > cost(a, ta) + cost(b, tb)) continue;
+        const sa = where[a], sb = where[b];
+        occ[sa] = b; occ[sb] = a; where[a] = sb; where[b] = sa;
+        members[ta].delete(a); members[ta].add(b); members[tb].delete(b); members[tb].add(a);
+      }
+    }
+
     for (let attempt = 0; attempt < 60; attempt++) {
       for (const k in pos) delete pos[k];
       for (const k in occ) delete occ[k];
-      for (const s of seats) freeInTable[s.table] = 0;
-      for (const s of seats) freeInTable[s.table]++;
+      // Most attempts keep the tables even; the last few drop that if the rules need it.
+      Object.assign(freeInTable, opts.even !== false && attempt < 45 ? evenCaps() : sizes);
 
       const comps = {};
       for (const s of shuffle([...constrained], rnd)) (comps[find(s)] = comps[find(s)] || []).push(s);
@@ -158,7 +200,7 @@
         if (i === order.length) return true;
         const s = order[i];
         for (const seat of shuffle((domain[s] || allSeatIds).slice(), rnd)) {
-          if (occ[seat]) continue;
+          if (occ[seat] || freeInTable[tableOf[seat]] <= 0) continue;
           if (--budget < 0) return false;
           pos[s] = seat; occ[seat] = s; freeInTable[tableOf[seat]]--;
           if (relOk() && place(i + 1)) return true;
@@ -168,9 +210,12 @@
       };
 
       if (place(0)) {
-        const free = shuffle(allSeatIds.filter(s => !occ[s]), rnd);
+        const room = Object.assign({}, freeInTable);
+        const free = shuffle(allSeatIds.filter(s => !occ[s]), rnd).filter(s => room[tableOf[s]]-- > 0);
         const rest = shuffle(students.filter(s => !constrained.has(s)), rnd);
+        if (rest.length > free.length) continue;
         rest.forEach((s, i) => { occ[free[i]] = s; });
+        avoidRepeats(occ);
         return { ok: true, assignment: Object.assign({}, occ) };
       }
     }

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Seating Planner</title>
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 <header>
@@ -15,6 +15,7 @@
   <button id="btnDupClass">Duplicate</button>
   <button id="btnDelClass">Delete</button>
   <span class="spacer"></span>
+  <span id="backupNote"></span>
   <button id="btnBackup" title="Download all classes as a backup file">Backup</button>
   <button id="btnRestore" title="Load a backup file">Restore</button>
   <input type="file" id="fileRestore" accept="application/json,.json" hidden>
@@ -26,6 +27,8 @@
   <button data-tab="history">History</button>
   <button data-tab="print">Print / PDF</button>
   <span class="spacer"></span>
+  <button id="btnUndo" title="Undo (Ctrl+Z)">Undo</button>
+  <button id="btnRedo" title="Redo (Ctrl+Y)">Redo</button>
   <label class="viewtoggle"><input type="checkbox" id="chkFlip"> Students' view</label>
   <button id="btnPresent" class="primary">Present</button>
 </nav>
@@ -39,6 +42,19 @@
   <div id="presentStage"></div>
   <div id="presentMsg"></div>
   <div id="presentControls">
+    <select id="pStyle" title="Shuffle style">
+      <option value="random">Surprise me</option>
+      <option value="slots">One by one</option>
+      <option value="tables">Table by table</option>
+      <option value="together">All at once</option>
+      <option value="spotlight">Name call</option>
+      <option value="deal">Deal the cards</option>
+    </select>
+    <select id="pSpeed" title="Shuffle speed">
+      <option value="fast">Fast</option>
+      <option value="normal">Normal</option>
+      <option value="slow">Dramatic</option>
+    </select>
     <button id="pShuffle">Shuffle</button>
     <button id="pFlip">Flip view</button>
     <button id="pExit">Exit</button>
@@ -53,7 +69,7 @@
   <div id="rulesBody"></div>
 </dialog>
 
-<script src="js/solver.js?v=6"></script>
-<script src="js/app.js?v=6"></script>
+<script src="js/solver.js?v=7"></script>
+<script src="js/app.js?v=7"></script>
 </body>
 </html>

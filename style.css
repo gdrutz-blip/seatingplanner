@@ -123,3 +123,24 @@ dialog::backdrop { background: rgba(20, 25, 35, .45); }
 .page .tpart { border-color: #555; }
 
 #sidebar > * { flex-shrink: 0; }
+
+#backupNote { color: var(--muted); font-size: 12.5px; }
+#backupNote.stale { color: var(--warn); font-weight: 600; }
+button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+#sidebar input[type=text] { width: 100%; }
+.seat.closed > div { border-style: solid; border-color: #d3d7de; color: #b3bac6; font-weight: 400;
+  background: repeating-linear-gradient(45deg, #f1f3f6 0 6px, #e6e9ee 6px 12px); }
+.item { position: absolute; display: flex; align-items: center; justify-content: center; overflow: hidden; pointer-events: none;
+  font-size: calc(var(--u) * .46); font-weight: 600; color: #4a5567; background: #f6f1e4; border: 1px solid #cdbf9c; border-radius: calc(var(--u) * .15); }
+.item span { white-space: nowrap; }
+.item.tall span { writing-mode: vertical-rl; }
+.item.kind-window { background: #e6f2fb; border-color: #9cc3e0; }
+.item.kind-board { background: #e9efe9; border-color: #9db59d; }
+.item.kind-door { background: #f3e7dc; border-color: #c9a37e; }
+.item.kind-label { background: none; border-style: dashed; }
+.mode-layout .item { pointer-events: auto; cursor: move; touch-action: none; }
+.mode-layout .item.sel { outline: 3px solid var(--accent); }
+.page .item { border-color: #555; color: #222; }
+.floater { position: fixed; z-index: 20; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: 600; line-height: 1.08;
+  background: #fff6d6; border: 2px solid #e0a800; border-radius: 6px; transition: transform .48s cubic-bezier(.2, .8, .3, 1); pointer-events: none; }
+#presentControls select { padding: 6px 8px; }
