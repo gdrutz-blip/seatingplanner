@@ -231,9 +231,6 @@
 
     const nSeats = listSeats(cls.layout).length;
     fill($('sidebar'), 
-      h('h3', {}, `Not seated (${unseated.length})`), chips,
-      h('p', { class: 'hint' }, 'Drag a name onto a seat, or click a name and then a seat. Drop one student on another to swap them.'),
-      h('p', { class: 'hint' }, `${cls.students.length} students, ${nSeats} seats.`),
       h('button', { class: 'primary', onclick: () => doShuffle(cls) }, 'Shuffle seats'),
       h('button', { onclick: () => { if (confirm('Remove everyone from their seats?')) { cls.assignment = {}; done(); } } }, 'Clear all seats'),
       h('button', {
@@ -242,6 +239,9 @@
           if (name) { snapshot(cls, name.trim() || 'Saved plan'); save(); alert('Saved. Find it under History.'); }
         },
       }, 'Save this plan…'),
+      h('p', { class: 'hint' }, `${cls.students.length} students, ${nSeats} seats.`),
+      h('h3', {}, `Not seated (${unseated.length})`), chips,
+      h('p', { class: 'hint' }, 'Drag a name onto a seat, or click a name and then a seat. Drop one student on another to swap them.'),
     );
 
     const wrap = renderRoom(cls, { flip: ui.flip, mode: 'seat' });

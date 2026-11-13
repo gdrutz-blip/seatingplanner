@@ -121,3 +121,5 @@ dialog::backdrop { background: rgba(20, 25, 35, .45); }
 .table.hasend { background: none; border-color: transparent; }
 .tpart { position: absolute; background: var(--table); border: 1px solid #b9c1ce; border-radius: calc(var(--u) * .25); pointer-events: none; }
 .page .tpart { border-color: #555; }
+
+#sidebar > * { flex-shrink: 0; }
