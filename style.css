@@ -144,3 +144,30 @@ button.on { background: var(--accent-soft); border-color: var(--accent); color: 
 .floater { position: fixed; z-index: 20; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: 600; line-height: 1.08;
   background: #fff6d6; border: 2px solid #e0a800; border-radius: 6px; transition: transform .48s cubic-bezier(.2, .8, .3, 1); pointer-events: none; }
 #presentControls select { padding: 6px 8px; }
+
+/* ---------- build tab ---------- */
+.panel.wide { width: min(1000px, 100%); }
+.panel.wide .roomwrap { margin: 14px auto 0; }
+table.notes { width: 100%; border-collapse: collapse; margin-top: 10px; }
+table.notes th, table.notes td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: middle; }
+table.notes thead th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-top: none; }
+table.notes tbody th { white-space: nowrap; }
+table.notes td.mid { text-align: center; }
+.people { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.people select { padding: 2px 4px; width: 44px; }
+.chip.small { cursor: default; padding: 1px 4px 1px 8px; font-size: 13px; display: inline-flex; align-items: center; gap: 2px; }
+.chip.small button { border: none; background: none; padding: 0 4px; color: var(--muted); font-size: 15px; line-height: 1; }
+.chip.small button:hover { color: var(--warn); }
+.tagbtn { padding: 2px 9px; border-radius: 999px; font-size: 13px; margin: 1px 4px 1px 0; color: var(--muted); }
+.tagbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tagbox { padding: 8px; border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; gap: 6px; }
+.tagbox input[type=text], .tagbox select { flex: 1; min-width: 0; }
+.tagbox .row > button { flex: none; width: 34px; padding: 6px 0; }
+#sidebar > select { width: 100%; }
+.report { margin: 10px 0 0; padding: 0; list-style: none; }
+.report li { padding: 6px 10px 6px 30px; border-radius: 6px; margin-bottom: 4px; position: relative; }
+.report li.good { background: #e7f6ee; }
+.report li.bad { background: #fff1e0; }
+.report li.good::before { content: "\2713"; position: absolute; left: 10px; color: var(--ok); font-weight: 700; }
+.report li.bad::before { content: "!"; position: absolute; left: 12px; color: #b25e00; font-weight: 700; }
+.seat.mark > div { border-color: #e08a00; border-width: 2px; background: #fff7ea; }

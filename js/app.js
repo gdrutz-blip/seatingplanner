@@ -166,7 +166,7 @@
         const inner = h('div', {}, shut ? '\u2715' : name);
         if (name) inner.style.fontSize = U(nameScale(name).toFixed(3));
         const sEl = h('div', {
-          class: 'seat' + (shut ? ' closed' : name ? '' : ' empty') + (ui.sel && ui.sel === sid && o.mode === 'seat' ? ' sel' : ''),
+          class: 'seat' + (shut ? ' closed' : name ? '' : ' empty') + (o.mark && o.mark.has(sid) ? ' mark' : '') + (ui.sel && ui.sel === sid && o.mode === 'seat' ? ' sel' : ''),
           'data-seat': id, draggable: o.mode === 'seat' && !!sid ? 'true' : null,
         }, inner);
         const isEnd = e && e.r === r && e.c === c;
@@ -573,6 +573,127 @@
       items.length ? h('ul', { class: 'vlist' }, items) : h('p', { class: 'muted' }, 'No saved plans yet.')));
   }
 
+  /* ---------------- build tab ----------------
+     Notes about each student and a button that searches for a plan to fit them.
+     Kept apart from the shuffle: its data lives in cls.build and the search is in builder.js. */
+  function buildPrefs(cls) {
+    const b = cls.build || (cls.build = { friends: 'with', students: {}, tags: [] });
+    const valid = new Set(cls.students.map(s => s.id)), tagIds = new Set(b.tags.map(t => t.id));
+    for (const id of Object.keys(b.students)) {
+      if (!valid.has(id)) { delete b.students[id]; continue; }
+      const p = b.students[id];
+      p.friends = (p.friends || []).filter(x => valid.has(x));
+      p.apart = (p.apart || []).filter(x => valid.has(x));
+      p.tags = (p.tags || []).filter(x => tagIds.has(x));
+    }
+    return b;
+  }
+  const buildOpts = cls => ({
+    students: cls.students, layout: cls.layout, closed: closedOf(cls), rules: cls.rules, across: cls.across,
+    prefs: buildPrefs(cls), roomH: ROOM_H, seatH: SH,
+  });
+  function renderBuild(cls) {
+    const b = buildPrefs(cls);
+    const sp = id => b.students[id] || (b.students[id] = { friends: [], apart: [], tags: [], front: false });
+    const keep = () => { const y = $('stage').scrollTop; save(); render(); $('stage').scrollTop = y; };
+    const sorted = cls.students.slice().sort((x, y) => x.name.localeCompare(y.name));
+    const runBuild = () => {
+      if (!cls.students.length) return alert('Add students first (Students tab).');
+      const btn = $('btnBuild'); btn.textContent = 'Building…'; btn.disabled = true;
+      setTimeout(() => {
+        const r = window.SeatBuilder.build(buildOpts(cls));
+        if (!r.ok) { alert('There are more students than seats. Add seats in Desk layout.'); return render(); }
+        cls.assignment = r.assignment;
+        snapshot(cls, 'Built plan', true);
+        ui.buildView = 'result'; save(); render();
+      }, 30);
+    };
+
+    fill($('sidebar'),
+      h('button', { id: 'btnBuild', class: 'primary', onclick: runBuild }, ui.buildView === 'result' ? 'Build another' : 'Build the plan'),
+      h('button', { onclick: () => { ui.buildView = ui.buildView === 'result' ? 'edit' : 'result'; render(); } },
+        ui.buildView === 'result' ? 'Back to the notes' : 'Check the plan on screen'),
+      h('p', { class: 'hint' }, 'Building replaces the current seating; Undo brings it back. Closed desks and seating rules are always followed.'),
+      h('h3', {}, 'Friends'),
+      h('select', { onchange: e => { b.friends = e.target.value; keep(); } },
+        [['with', 'Seat everyone with at least one friend'], ['apart', 'Keep friends at different tables'], ['ignore', 'Ignore friends']]
+          .map(([v, l]) => h('option', { value: v, selected: b.friends === v }, l))),
+      h('h3', {}, 'Tags'),
+      h('p', { class: 'hint' }, 'Your own labels, such as "talker" or "strong reader", each with a rule for how to seat them.'),
+      b.tags.map(t => h('div', { class: 'tagbox' },
+        h('div', { class: 'row' },
+          h('input', { type: 'text', value: t.name, maxlength: 24, onchange: e => { t.name = e.target.value.trim() || t.name; keep(); } }),
+          h('button', { class: 'danger', title: 'Delete tag', onclick: () => { b.tags = b.tags.filter(x => x !== t); keep(); } }, '✕')),
+        h('div', { class: 'row' },
+          h('select', { onchange: e => { t.mode = e.target.value; keep(); } },
+            [['spread', 'Spread evenly over tables'], ['max', 'At most this many per table'], ['none', 'Just a note']]
+              .map(([v, l]) => h('option', { value: v, selected: t.mode === v }, l))),
+          t.mode === 'max' && h('input', { type: 'number', min: 1, max: 9, value: t.max || 1, onchange: e => { t.max = Math.max(1, Math.min(9, +e.target.value || 1)); keep(); } })))),
+      h('button', { onclick: () => { b.tags.push({ id: uid(), name: 'New tag', mode: 'spread', max: 2 }); keep(); } }, 'Add a tag'),
+    );
+
+    if (ui.buildView === 'result') return renderBuildResult(cls);
+
+    // A list of names with remove buttons, and a dropdown to add another.
+    const people = (ids, max, exclude, add, remove) => h('div', { class: 'people' },
+      ids.map(id => h('span', { class: 'chip small' }, studentName(cls, id), h('button', { title: 'Remove', onclick: () => { remove(id); keep(); } }, '×'))),
+      ids.length < max && h('select', { onchange: e => { if (e.target.value) { add(e.target.value); keep(); } } },
+        h('option', { value: '' }, '+'), sorted.filter(s => !exclude.includes(s.id)).map(s => h('option', { value: s.id }, s.name))));
+    const rows = sorted.map(s => {
+      const p = b.students[s.id] || { friends: [], apart: [], tags: [], front: false };
+      return h('tr', {},
+        h('th', {}, s.name),
+        h('td', {}, people(p.friends, 3, [s.id, ...p.friends], id => sp(s.id).friends.push(id), id => { sp(s.id).friends = p.friends.filter(x => x !== id); })),
+        h('td', {}, people(p.apart, 6, [s.id, ...p.apart],
+          id => { sp(s.id).apart.push(id); if (!sp(id).apart.includes(s.id)) sp(id).apart.push(s.id); },
+          id => { sp(s.id).apart = p.apart.filter(x => x !== id); sp(id).apart = sp(id).apart.filter(x => x !== s.id); })),
+        h('td', { class: 'mid' }, h('input', { type: 'checkbox', checked: !!p.front, onchange: e => { sp(s.id).front = e.target.checked; keep(); } })),
+        h('td', {}, b.tags.map(t => h('button', {
+          class: 'tagbtn' + (p.tags.includes(t.id) ? ' on' : ''),
+          onclick: () => { const q = sp(s.id); q.tags = q.tags.includes(t.id) ? q.tags.filter(x => x !== t.id) : [...q.tags, t.id]; keep(); },
+        }, t.name))));
+    });
+    $('stage').replaceChildren(h('div', { class: 'panel wide' },
+      h('h2', {}, 'Notes for ' + cls.name),
+      cls.students.length ? h('table', { class: 'notes' },
+        h('thead', {}, h('tr', {}, ['Student', 'Friends (up to 3)', 'Keep away from', 'Front', 'Tags'].map(x => h('th', {}, x)))),
+        h('tbody', {}, rows)) : h('p', { class: 'muted' }, 'Add students first (Students tab).')));
+  }
+  function renderBuildResult(cls) {
+    const r = window.SeatBuilder.evaluate(Object.assign({ assignment: cls.assignment }, buildOpts(cls)));
+    const names = ids => ids.map(id => studentName(cls, id)).join(', ');
+    const line = (ok, text) => h('li', { class: ok ? 'good' : 'bad' }, text);
+    const items = [];
+    if (r.seated < r.total) items.push(line(false, `${r.total - r.seated} student(s) are not seated.`));
+    if (r.mode === 'with' && r.friend.asked) {
+      const n = r.friend.asked - r.friend.lonely.length;
+      items.push(line(!r.friend.lonely.length, `${n} of ${r.friend.asked} students have a friend at their table.` + (r.friend.lonely.length ? ' Without one: ' + names(r.friend.lonely) + '.' : '')));
+    }
+    if (r.mode === 'apart') items.push(line(!r.friend.together.length, r.friend.together.length
+      ? 'Friends still at the same table: ' + r.friend.together.map(p => names(p).replace(', ', ' & ')).join('; ') + '.' : 'No friends share a table.'));
+    if (r.apart.total) items.push(line(!r.apart.broken.length, r.apart.broken.length
+      ? 'Still at the same table: ' + r.apart.broken.map(p => names(p).replace(', ', ' & ')).join('; ') + '.' : `All ${r.apart.total} keep-away pairs are at different tables.`));
+    if (r.front.total) items.push(line(!r.front.missed.length, r.front.missed.length
+      ? 'Not at a front table: ' + names(r.front.missed) + '.' : `All ${r.front.total} students who need the front are at a front table.`));
+    for (const t of r.tags) {
+      if (t.tag.mode === 'none') continue;
+      const counts = t.counts.slice().sort((x, y) => x.table.num - y.table.num).map(c => `T${c.table.num}: ${c.n}`).join(', ');
+      items.push(line(!t.over, `${t.tag.name} per table: ${counts}.` + (t.over ? ` Over the limit of ${t.tag.max}.` : '')));
+    }
+    if (r.rules.broken) items.push(line(false, `${r.rules.broken} seating rule(s) could not be met.`));
+    if (!items.length) items.push(h('li', {}, 'No notes yet, so there is nothing to check. Add friends or tags and build again.'));
+
+    const mark = new Set([...r.friend.lonely, ...r.front.missed, ...r.apart.broken.flat(), ...r.friend.together.flat()]);
+    const wrap = renderRoom(cls, { flip: ui.flip, mode: 'view', crop: true, mark });
+    const st = $('stage');
+    st.replaceChildren(h('div', { class: 'panel wide' },
+      h('h2', {}, 'How this plan fits your notes'),
+      h('ul', { class: 'report' }, items),
+      mark.size ? h('p', { class: 'muted' }, 'Students with an unmet note are outlined in orange. You can move them on the Seating tab.') : null,
+      wrap));
+    fit(wrap, Math.min(st.clientWidth - 90, 900), 420);
+  }
+
   /* ---------------- print tab ---------------- */
   function renderPrint() {
     if (!ui.printIds) ui.printIds = state.classes.map(c => c.id);
@@ -861,11 +982,12 @@
   function render() {
     const cls = cur();
     renderHeader();
-    document.querySelector('.viewtoggle').style.visibility = (ui.tab === 'seating' || ui.tab === 'layout') ? '' : 'hidden';
+    document.querySelector('.viewtoggle').style.visibility = (ui.tab === 'seating' || ui.tab === 'layout' || (ui.tab === 'build' && ui.buildView === 'result')) ? '' : 'hidden';
     if (ui.tab === 'seating') renderSeating(cls);
     else if (ui.tab === 'layout') renderLayout(cls);
     else if (ui.tab === 'students') renderStudents(cls);
     else if (ui.tab === 'history') renderHistory(cls);
+    else if (ui.tab === 'build') renderBuild(cls);
     else renderPrint();
   }
   state.classes.forEach(prune);
