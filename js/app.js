@@ -1,0 +1,637 @@
+(function () {
+  'use strict';
+  const { seatId, listSeats, solve, shuffle } = window.SeatSolver;
+
+  const KEY = 'seatingplanner.v1';
+  const ROOM_W = 32, ROOM_H = 20, SW = 3, SH = 2;
+  const $ = id => document.getElementById(id);
+  const uid = () => Math.random().toString(36).slice(2, 10);
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+      else if (k === 'class') el.className = v;
+      else if (v === true) el.setAttribute(k, '');
+      else if (v !== false && v != null) el.setAttribute(k, v);
+    }
+    for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
+    return el;
+  }
+
+  /* ---------------- state ---------------- */
+  function defaultLayout() {
+    const spots = [[1, 2], [11.5, 2], [22, 2], [6, 10], [17, 10]];
+    return { tables: spots.map(([x, y], i) => ({ id: uid(), num: i + 1, x, y, cols: 3, rows: 2 })) };
+  }
+  function newClass(name) {
+    return { id: uid(), name, students: [], layout: defaultLayout(), assignment: {}, rules: [], across: false, versions: [] };
+  }
+  function loadState() {
+    try {
+      const s = JSON.parse(localStorage.getItem(KEY));
+      if (s && Array.isArray(s.classes) && s.classes.length) return s;
+    } catch (e) { /* fall through */ }
+    const c = newClass('My class');
+    return { classes: [c], current: c.id };
+  }
+  let state = loadState();
+  const ui = { tab: 'seating', flip: false, sel: null, selTable: null, printIds: null, printFlip: false };
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); }
+    catch (e) { alert('Could not save to this browser\'s storage. Use Backup to keep your work.'); }
+  }
+  const cur = () => state.classes.find(c => c.id === state.current) || state.classes[0];
+  const studentName = (cls, id) => (cls.students.find(s => s.id === id) || {}).name || '';
+  const seatOf = (cls, sid) => Object.keys(cls.assignment).find(k => cls.assignment[k] === sid);
+  const tableById = (cls, id) => cls.layout.tables.find(t => t.id === id);
+  const tableName = t => 'Table ' + t.num;
+
+  /* Drop seat assignments and rules that point at things that no longer exist. */
+  function prune(cls) {
+    const seats = new Set(listSeats(cls.layout).map(s => s.id));
+    const studs = new Set(cls.students.map(s => s.id));
+    const tabs = new Set(cls.layout.tables.map(t => t.id));
+    const seen = new Set();
+    for (const [seat, sid] of Object.entries(cls.assignment)) {
+      if (!seats.has(seat) || !studs.has(sid) || seen.has(sid)) delete cls.assignment[seat];
+      else seen.add(sid);
+    }
+    cls.rules = cls.rules.filter(r => {
+      if (!studs.has(r.a)) return false;
+      if (r.type === 'tables') { r.tables = r.tables.filter(t => tabs.has(t)); return r.tables.length > 0; }
+      if (r.type === 'seat') return seats.has(r.seat);
+      r.others = r.others.filter(o => studs.has(o));
+      return r.others.length > 0;
+    });
+  }
+
+  function snapshot(cls, name, auto) {
+    cls.versions.unshift({ id: uid(), name, ts: Date.now(), auto: !!auto, layout: clone(cls.layout), assignment: clone(cls.assignment) });
+    const autos = cls.versions.filter(v => v.auto);
+    if (autos.length > 20) cls.versions = cls.versions.filter(v => !v.auto || autos.indexOf(v) < 20);
+  }
+
+  /* ---------------- room rendering ---------------- */
+  function bounds(layout, crop) {
+    if (!crop || !layout.tables.length) return { x: 0, y: 0, w: ROOM_W, h: ROOM_H };
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const t of layout.tables) {
+      x0 = Math.min(x0, t.x); y0 = Math.min(y0, t.y);
+      x1 = Math.max(x1, t.x + t.cols * SW); y1 = Math.max(y1, t.y + t.rows * SH);
+    }
+    return { x: x0 - .5, y: y0 - 1.1, w: x1 - x0 + 1, h: y1 - y0 + 2.2 };
+  }
+  function nameScale(name) {
+    const words = name.split(/\s+/);
+    const longest = Math.max(...words.map(w => w.length), 1);
+    return Math.min(.62, 2.6 / (.6 * longest), 1.7 / (1.1 * Math.min(words.length, 3)));
+  }
+  const U = n => `calc(var(--u) * ${n})`;
+
+  /* o: { flip, mode: 'seat'|'layout'|'view', crop, assignment } */
+  function renderRoom(cls, o) {
+    const b = bounds(cls.layout, o.crop);
+    const asg = o.assignment || cls.assignment;
+    const fx = (x, w) => o.flip ? b.w - (x - b.x) - w : x - b.x;
+    const fy = (y, hh) => o.flip ? b.h - (y - b.y) - hh : y - b.y;
+    const room = h('div', { class: 'room mode-' + o.mode });
+    room.style.width = U(b.w); room.style.height = U(b.h);
+    for (const t of cls.layout.tables) {
+      const w = t.cols * SW, hh = t.rows * SH;
+      const tx = fx(t.x, w), ty = fy(t.y, hh);
+      const tEl = h('div', { class: 'table' + (o.mode === 'layout' && ui.selTable === t.id ? ' sel' : ''), 'data-table': t.id });
+      Object.assign(tEl.style, { left: U(tx), top: U(ty), width: U(w), height: U(hh) });
+      const lab = h('div', { class: 'tlabel' }, tableName(t));
+      Object.assign(lab.style, { left: U(tx), top: U(ty - .9), width: U(w) });
+      room.append(tEl, lab);
+      for (let r = 0; r < t.rows; r++) for (let c = 0; c < t.cols; c++) {
+        const id = seatId(t, r, c);
+        const sid = asg[id];
+        const name = sid ? studentName(cls, sid) : '';
+        const inner = h('div', {}, name);
+        if (name) inner.style.fontSize = U(nameScale(name).toFixed(3));
+        const sEl = h('div', {
+          class: 'seat' + (name ? '' : ' empty') + (ui.sel && ui.sel === sid && o.mode === 'seat' ? ' sel' : ''),
+          'data-seat': id, draggable: o.mode === 'seat' && !!sid ? 'true' : null,
+        }, inner);
+        Object.assign(sEl.style, { left: U(fx(t.x + c * SW, SW)), top: U(fy(t.y + r * SH, SH)), width: U(SW), height: U(SH) });
+        room.append(sEl);
+      }
+    }
+    const front = h('div', { class: 'front' }, 'FRONT');
+    const wrap = h('div', { class: 'roomwrap' }, o.flip ? [front, room] : [room, front]);
+    wrap._b = b;
+    return wrap;
+  }
+  function fit(wrap, availW, availH) {
+    const u = Math.max(8, Math.min(availW / wrap._b.w, availH / (wrap._b.h + 1.7)));
+    wrap.style.setProperty('--u', u.toFixed(2) + 'px');
+    return u;
+  }
+
+  /* ---------------- top bar ---------------- */
+  function renderHeader() {
+    const sel = $('classSelect');
+    sel.replaceChildren(...state.classes.map(c => h('option', { value: c.id, selected: c.id === cur().id }, c.name)));
+    document.querySelectorAll('nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
+    $('chkFlip').checked = ui.flip;
+  }
+  function switchClass(id) { state.current = id; ui.sel = ui.selTable = null; save(); render(); }
+
+  $('classSelect').onchange = e => switchClass(e.target.value);
+  $('btnNewClass').onclick = () => {
+    const name = prompt('Name for the new class:');
+    if (!name || !name.trim()) return;
+    const c = newClass(name.trim());
+    if (confirm('Copy the desk layout from "' + cur().name + '"?\n(Cancel = start with the default layout)')) {
+      c.layout = clone(cur().layout);
+    }
+    state.classes.push(c); switchClass(c.id);
+  };
+  $('btnRenameClass').onclick = () => {
+    const name = prompt('Class name:', cur().name);
+    if (name && name.trim()) { cur().name = name.trim(); save(); render(); }
+  };
+  $('btnDupClass').onclick = () => {
+    const c = clone(cur()); c.id = uid(); c.name += ' (copy)';
+    state.classes.push(c); switchClass(c.id);
+  };
+  $('btnDelClass').onclick = () => {
+    if (!confirm('Delete "' + cur().name + '" and all its saved seating plans? This cannot be undone.')) return;
+    state.classes = state.classes.filter(c => c !== cur());
+    if (!state.classes.length) state.classes.push(newClass('My class'));
+    switchClass(state.classes[0].id);
+  };
+  $('btnBackup').onclick = () => {
+    const blob = new Blob([JSON.stringify(state, null, 1)], { type: 'application/json' });
+    const a = h('a', { href: URL.createObjectURL(blob), download: 'seating-backup-' + new Date().toISOString().slice(0, 10) + '.json' });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  $('btnRestore').onclick = () => $('fileRestore').click();
+  $('fileRestore').onchange = async e => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    try {
+      const s = JSON.parse(await f.text());
+      if (!s || !Array.isArray(s.classes) || !s.classes.length) throw new Error('bad file');
+      if (!confirm('Replace everything in this browser with the ' + s.classes.length + ' class(es) from the backup?')) return;
+      state = s; state.classes.forEach(prune); save(); render();
+    } catch (err) { alert('That file is not a seating planner backup.'); }
+  };
+  document.querySelectorAll('nav button[data-tab]').forEach(b => {
+    b.onclick = () => { ui.tab = b.dataset.tab; ui.sel = null; render(); };
+  });
+  $('chkFlip').onchange = e => { ui.flip = e.target.checked; render(); };
+
+  /* ---------------- seating tab ---------------- */
+  function place(cls, sid, seat) {
+    const from = seatOf(cls, sid), occ = cls.assignment[seat];
+    if (from === seat) return;
+    if (from) delete cls.assignment[from];
+    if (occ && from) cls.assignment[from] = occ;
+    cls.assignment[seat] = sid;
+  }
+  function unseat(cls, sid) { const s = seatOf(cls, sid); if (s) delete cls.assignment[s]; }
+
+  function renderSeating(cls) {
+    const seated = new Set(Object.values(cls.assignment));
+    const unseated = cls.students.filter(s => !seated.has(s.id));
+    const done = () => { ui.sel = null; save(); render(); };
+
+    const chips = h('div', {
+      class: 'chips',
+      onclick: e => { if (e.target === chips && ui.sel) { unseat(cls, ui.sel); done(); } },
+      ondragover: e => { e.preventDefault(); chips.classList.add('over'); },
+      ondragleave: () => chips.classList.remove('over'),
+      ondrop: e => { e.preventDefault(); const sid = e.dataTransfer.getData('text/plain'); if (sid) { unseat(cls, sid); done(); } },
+    }, unseated.map(s => h('span', {
+      class: 'chip' + (ui.sel === s.id ? ' sel' : ''), draggable: 'true',
+      onclick: () => { ui.sel = ui.sel === s.id ? null : s.id; render(); },
+      ondragstart: e => { e.dataTransfer.setData('text/plain', s.id); },
+    }, s.name)));
+
+    const nSeats = listSeats(cls.layout).length;
+    $('sidebar').replaceChildren(
+      h('h3', {}, `Not seated (${unseated.length})`), chips,
+      h('p', { class: 'hint' }, 'Drag a name onto a seat, or click a name and then a seat. Drop one student on another to swap them.'),
+      h('p', { class: 'hint' }, `${cls.students.length} students, ${nSeats} seats.`),
+      h('button', { class: 'primary', onclick: () => doShuffle(cls) }, 'Shuffle seats'),
+      h('button', { onclick: () => { if (confirm('Remove everyone from their seats?')) { cls.assignment = {}; done(); } } }, 'Clear all seats'),
+      h('button', {
+        onclick: () => {
+          const name = prompt('Name for this saved plan:', new Date().toLocaleDateString());
+          if (name) { snapshot(cls, name.trim() || 'Saved plan'); save(); alert('Saved. Find it under History.'); }
+        },
+      }, 'Save this plan…'),
+    );
+
+    const wrap = renderRoom(cls, { flip: ui.flip, mode: 'seat' });
+    wrap.querySelectorAll('.seat').forEach(el => {
+      const seat = el.dataset.seat;
+      el.onclick = () => {
+        const occ = cls.assignment[seat];
+        if (ui.sel) { place(cls, ui.sel, seat); done(); }
+        else if (occ) { ui.sel = occ; render(); }
+      };
+      el.ondragstart = e => { e.dataTransfer.setData('text/plain', cls.assignment[seat]); };
+      el.ondragover = e => { e.preventDefault(); el.classList.add('over'); };
+      el.ondragleave = () => el.classList.remove('over');
+      el.ondrop = e => { e.preventDefault(); const sid = e.dataTransfer.getData('text/plain'); if (sid) { place(cls, sid, seat); done(); } };
+    });
+    showRoom(wrap);
+  }
+  function showRoom(wrap) {
+    const st = $('stage');
+    st.replaceChildren(wrap);
+    fit(wrap, st.clientWidth - 40, st.clientHeight - 50);
+  }
+
+  function trySolve(cls) {
+    return solve({ students: cls.students, layout: cls.layout, rules: cls.rules, across: cls.across });
+  }
+  function doShuffle(cls) {
+    if (!cls.students.length) return alert('Add students first (Students tab).');
+    const r = trySolve(cls);
+    if (!r.ok) {
+      return alert(r.reason === 'seats' ? 'There are more students than seats. Add seats in Desk layout.' : 'Couldn\'t shuffle. Check the class setup.');
+    }
+    cls.assignment = r.assignment;
+    snapshot(cls, 'Shuffle', true);
+    ui.sel = null; save(); render();
+  }
+
+  /* ---------------- layout tab ---------------- */
+  function renderLayout(cls) {
+    const t = tableById(cls, ui.selTable);
+    const changed = () => { prune(cls); save(); render(); };
+    const num = (label, key, min, max) => h('div', { class: 'row' }, h('label', {}, label),
+      h('input', {
+        type: 'number', min, max, value: t[key],
+        onchange: e => { t[key] = Math.max(min, Math.min(max, Math.round(+e.target.value) || min)); clamp(t); changed(); },
+      }));
+    $('sidebar').replaceChildren(
+      h('button', {
+        class: 'primary',
+        onclick: () => {
+          const n = Math.max(0, ...cls.layout.tables.map(x => +x.num || 0)) + 1;
+          const nt = { id: uid(), num: n, x: 1, y: 1, cols: 3, rows: 2 };
+          cls.layout.tables.push(nt); ui.selTable = nt.id; changed();
+        },
+      }, 'Add a table'),
+      h('p', { class: 'hint' }, 'Drag tables to move them. Click one to change its size. A single row of desks is a table that is 1 seat deep.'),
+      t ? [
+        h('h3', {}, 'Selected table'),
+        num('Table number', 'num', 1, 99),
+        num('Seats across', 'cols', 1, 8),
+        num('Seats deep', 'rows', 1, 8),
+        h('p', { class: 'hint' }, `${t.cols * t.rows} seats`),
+        h('button', {
+          onclick: () => {
+            const n = Math.max(0, ...cls.layout.tables.map(x => +x.num || 0)) + 1;
+            const nt = Object.assign(clone(t), { id: uid(), num: n, x: t.x + 1, y: t.y + 1 });
+            clamp(nt); cls.layout.tables.push(nt); ui.selTable = nt.id; changed();
+          },
+        }, 'Duplicate table'),
+        h('button', {
+          class: 'danger',
+          onclick: () => { cls.layout.tables = cls.layout.tables.filter(x => x !== t); ui.selTable = null; changed(); },
+        }, 'Delete table'),
+      ] : h('p', { class: 'hint' }, 'No table selected.'),
+      h('h3', {}, 'Whole room'),
+      h('button', {
+        onclick: () => {
+          if (confirm('Replace this layout with 5 tables of 6? Students will be unseated.')) { cls.layout = defaultLayout(); ui.selTable = null; changed(); }
+        },
+      }, 'Reset to 5 tables of 6'),
+    );
+
+    const wrap = renderRoom(cls, { flip: ui.flip, mode: 'layout' });
+    showRoom(wrap);
+    wrap.querySelectorAll('.table').forEach(el => {
+      el.onpointerdown = e => startDrag(e, cls, el.dataset.table);
+    });
+    wrap.querySelector('.room').onpointerdown = e => {
+      if (e.target.classList.contains('room') && ui.selTable) { ui.selTable = null; render(); }
+    };
+  }
+  function clamp(t) {
+    t.x = Math.max(0, Math.min(ROOM_W - t.cols * SW, t.x));
+    t.y = Math.max(1, Math.min(ROOM_H - t.rows * SH, t.y));
+  }
+  function startDrag(e, cls, tid) {
+    e.preventDefault();
+    const t = tableById(cls, tid);
+    const u = parseFloat(getComputedStyle(e.target.closest('.roomwrap')).getPropertyValue('--u'));
+    const sx = e.clientX, sy = e.clientY, ox = t.x, oy = t.y, dir = ui.flip ? -1 : 1;
+    ui.selTable = tid;
+    const move = ev => {
+      t.x = Math.round((ox + dir * (ev.clientX - sx) / u) * 2) / 2;
+      t.y = Math.round((oy + dir * (ev.clientY - sy) / u) * 2) / 2;
+      clamp(t);
+      const el = document.querySelector(`#stage [data-table="${tid}"]`);
+      if (el) el.style.opacity = .6;
+      renderLayoutRoomOnly(cls);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      save(); render();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+  function renderLayoutRoomOnly(cls) {
+    const wrap = renderRoom(cls, { flip: ui.flip, mode: 'layout' });
+    showRoom(wrap);
+  }
+
+  /* ---------------- students tab ---------------- */
+  function applyStudents(cls, text) {
+    const names = text.split('\n').map(s => s.trim()).filter(Boolean);
+    const old = cls.students.slice();
+    const used = new Set();
+    const out = names.map(name => {
+      const m = old.find(s => s.name === name && !used.has(s.id));
+      if (m) { used.add(m.id); return m; }
+      return { id: null, name };
+    });
+    // A changed line in the same position is treated as a rename, so the seat is kept.
+    out.forEach((s, i) => {
+      if (s.id) return;
+      const o = old[i];
+      if (o && !used.has(o.id)) { used.add(o.id); s.id = o.id; } else s.id = uid();
+    });
+    cls.students = out;
+    prune(cls);
+  }
+  function renderStudents(cls) {
+    $('sidebar').replaceChildren(
+      h('h3', {}, 'Class list'),
+      h('p', { class: 'hint' }, 'One student per line. You can paste a list from a spreadsheet column.'),
+      h('p', { class: 'hint' }, 'Removing a line removes that student from their seat. Editing a name in place keeps their seat.'),
+    );
+    const ta = h('textarea', { spellcheck: 'false', placeholder: 'Alice\nBen\nCarol' });
+    ta.value = cls.students.map(s => s.name).join('\n');
+    const count = h('span', { class: 'muted' }, cls.students.length + ' students');
+    $('stage').replaceChildren(h('div', { class: 'panel' },
+      h('h2', {}, 'Students in ' + cls.name), ta,
+      h('div', { class: 'row' },
+        h('button', { class: 'primary', onclick: () => { applyStudents(cls, ta.value); save(); render(); } }, 'Save list'),
+        count)));
+  }
+
+  /* ---------------- history tab ---------------- */
+  function renderHistory(cls) {
+    $('sidebar').replaceChildren(
+      h('h3', {}, 'Saved plans'),
+      h('p', { class: 'hint' }, 'Each saved plan remembers the desk layout and who sat where. A plan is also saved automatically every time you shuffle.'),
+      h('button', {
+        class: 'primary',
+        onclick: () => {
+          const name = prompt('Name for this saved plan:', new Date().toLocaleDateString());
+          if (name) { snapshot(cls, name.trim() || 'Saved plan'); save(); render(); }
+        },
+      }, 'Save current plan…'),
+    );
+    const items = cls.versions.map(v => h('li', {},
+      h('div', { class: 'vname' }, v.name, h('small', {}, new Date(v.ts).toLocaleString() + ` · ${Object.keys(v.assignment).length} seated`)),
+      h('button', {
+        onclick: () => {
+          if (!confirm('Load "' + v.name + '"? The plan on screen now will be replaced.')) return;
+          cls.layout = clone(v.layout); cls.assignment = clone(v.assignment);
+          prune(cls); save(); ui.tab = 'seating'; render();
+        },
+      }, 'Load'),
+      h('button', { onclick: () => { const n = prompt('Rename:', v.name); if (n) { v.name = n; v.auto = false; save(); render(); } } }, 'Rename'),
+      h('button', { class: 'danger', onclick: () => { cls.versions = cls.versions.filter(x => x !== v); save(); render(); } }, 'Delete'),
+    ));
+    $('stage').replaceChildren(h('div', { class: 'panel' },
+      h('h2', {}, 'History for ' + cls.name),
+      items.length ? h('ul', { class: 'vlist' }, items) : h('p', { class: 'muted' }, 'No saved plans yet.')));
+  }
+
+  /* ---------------- print tab ---------------- */
+  function renderPrint() {
+    if (!ui.printIds) ui.printIds = state.classes.map(c => c.id);
+    ui.printIds = ui.printIds.filter(id => state.classes.some(c => c.id === id));
+    const chosen = state.classes.filter(c => ui.printIds.includes(c.id));
+    $('sidebar').replaceChildren(
+      h('h3', {}, 'Classes to print'),
+      state.classes.map(c => h('label', {}, h('input', {
+        type: 'checkbox', checked: ui.printIds.includes(c.id),
+        onchange: e => { ui.printIds = e.target.checked ? [...ui.printIds, c.id] : ui.printIds.filter(i => i !== c.id); render(); },
+      }), ' ' + c.name)),
+      h('p', { class: 'hint' }, 'Two classes fit on each portrait page, one above the other.'),
+      h('h3', {}, 'Drawn from'),
+      h('label', {}, h('input', { type: 'radio', name: 'pv', checked: !ui.printFlip, onchange: () => { ui.printFlip = false; render(); } }), ' Teacher\'s view (front at bottom)'),
+      h('label', {}, h('input', { type: 'radio', name: 'pv', checked: ui.printFlip, onchange: () => { ui.printFlip = true; render(); } }), ' Students\' view (front at top)'),
+      h('button', { class: 'primary', disabled: !chosen.length, onclick: () => window.print() }, 'Print / Save as PDF'),
+      h('p', { class: 'hint' }, 'In the print window choose "Save as PDF" as the printer to get a PDF. Turn off "Headers and footers" for a cleaner page.'),
+    );
+    const date = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+    const pages = [];
+    for (let i = 0; i < chosen.length; i += 2) {
+      pages.push(h('div', { class: 'page' }, chosen.slice(i, i + 2).map(c => {
+        const wrap = renderRoom(c, { flip: ui.printFlip, mode: 'view', crop: true });
+        const u = Math.min(7.4 / wrap._b.w, 4.25 / (wrap._b.h + 1.7));
+        wrap.style.setProperty('--u', u.toFixed(4) + 'in');
+        return h('div', { class: 'pblock' }, h('div', { class: 'ptitle' }, h('span', {}, c.name), h('small', {}, date)), wrap);
+      })));
+    }
+    $('stage').replaceChildren(h('div', { class: 'pages' }, pages.length ? pages : h('p', { class: 'muted' }, 'Tick at least one class.')));
+  }
+
+  /* ---------------- present ---------------- */
+  let pres = null;
+  function openPresent() {
+    pres = { flip: true, shown: null, busy: false, skip: false };
+    $('present').hidden = false;
+    $('presentMsg').textContent = '';
+    renderPresent();
+    const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+    if (p && p.catch) p.catch(() => {});
+  }
+  function closePresent() {
+    if (!pres) return;
+    pres.skip = true; pres = null;
+    $('present').hidden = true;
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    render();
+  }
+  function renderPresent() {
+    if (!pres) return;
+    const cls = cur();
+    $('presentTitle').textContent = cls.name;
+    const wrap = renderRoom(cls, { flip: pres.flip, mode: 'view', crop: true, assignment: pres.shown || cls.assignment });
+    $('presentStage').replaceChildren(wrap);
+    fit(wrap, window.innerWidth - 40, window.innerHeight - 110);
+  }
+  async function presentShuffle() {
+    const cls = cur(), p = pres;
+    if (!p) return;
+    if (p.busy) { p.skip = true; return; }
+    $('presentMsg').textContent = '';
+    const r = cls.students.length ? trySolve(cls) : { ok: false };
+    if (!r.ok) { $('presentMsg').textContent = 'Shuffle isn\'t available right now.'; return; }
+
+    // The result is committed straight away; the animation only reveals it.
+    cls.assignment = r.assignment;
+    snapshot(cls, 'Shuffle', true);
+    save();
+
+    p.busy = true; p.skip = false; p.shown = {};
+    renderPresent();
+    const order = shuffle(Object.entries(r.assignment));
+    const pool = cls.students.map(s => s.name);
+    for (let i = 0; i < order.length && !p.skip; i++) {
+      const [seat, sid] = order[i];
+      const el = document.querySelector(`#presentStage [data-seat="${seat}"]`);
+      if (!el) continue;
+      const inner = el.firstChild;
+      el.classList.remove('empty'); el.classList.add('rolling');
+      const left = order.slice(i).map(([, s]) => studentName(cls, s));
+      for (let k = 0; k < 7 && !p.skip; k++) {
+        const n = (left.length > 1 ? left : pool)[Math.floor(Math.random() * (left.length > 1 ? left.length : pool.length))];
+        inner.textContent = n; inner.style.fontSize = U(nameScale(n).toFixed(3));
+        await sleep(45);
+      }
+      const name = studentName(cls, sid);
+      inner.textContent = name; inner.style.fontSize = U(nameScale(name).toFixed(3));
+      el.classList.remove('rolling'); el.classList.add('landed');
+      p.shown[seat] = sid;
+      await sleep(110);
+    }
+    p.busy = false; p.shown = null;
+    if (pres === p) renderPresent();
+  }
+  $('btnPresent').onclick = openPresent;
+  $('pExit').onclick = closePresent;
+  $('pFlip').onclick = () => { if (pres && !pres.busy) { pres.flip = !pres.flip; renderPresent(); } };
+  $('pShuffle').onclick = presentShuffle;
+
+  /* ---------------- rules (opened with Alt+R or a triple-click on the title) ---------------- */
+  const RULE_TYPES = [
+    ['tables', 'must sit at one of these tables'],
+    ['with', 'must share a table with at least one of'],
+    ['beside', 'must sit beside at least one of'],
+    ['notwith', 'must NOT share a table with any of'],
+    ['notbeside', 'must NOT sit beside any of'],
+    ['seat', 'stays in the seat they are in now'],
+  ];
+  const joinOr = (a, word) => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' ' + word + ' ' + a[a.length - 1];
+  function ruleText(cls, r) {
+    const a = studentName(cls, r.a);
+    const names = (r.others || []).map(o => studentName(cls, o));
+    switch (r.type) {
+      case 'tables': return `${a} must sit at ${joinOr(r.tables.map(t => tableName(tableById(cls, t))), 'or')}`;
+      case 'with': return `${a} must share a table with ${joinOr(names, 'or')}`;
+      case 'beside': return `${a} must sit beside ${joinOr(names, 'or')}`;
+      case 'notwith': return `${a} must not share a table with ${joinOr(names, 'or')}`;
+      case 'notbeside': return `${a} must not sit beside ${joinOr(names, 'or')}`;
+      case 'seat': return `${a} stays in their seat at ${tableName(tableById(cls, r.seat.split(':')[0]))}`;
+    }
+    return '';
+  }
+  const form = { a: '', type: 'tables', picks: new Set() };
+  function openRules() {
+    if (pres) return;
+    form.a = ''; form.picks = new Set();
+    renderRules();
+    if (!$('rulesDialog').open) $('rulesDialog').showModal();
+  }
+  function renderRules() {
+    const cls = cur();
+    prune(cls);
+    const changed = () => { save(); renderRules(); };
+    let status;
+    if (!cls.students.length) status = h('div', { class: 'status bad' }, 'Add students first.');
+    else {
+      const r = trySolve(cls);
+      status = r.ok
+        ? h('div', { class: 'status ok' }, cls.rules.length ? 'These rules can all be met.' : 'No rules yet. Shuffles are fully random.')
+        : h('div', { class: 'status bad' }, r.reason === 'seats' ? 'There are more students than seats.' : 'These rules cannot all be met with this desk layout. Shuffle will not run until one is removed.');
+    }
+    const list = h('ul', { class: 'rulelist' }, cls.rules.map(r => h('li', {},
+      h('span', {}, ruleText(cls, r)),
+      h('button', { class: 'danger', onclick: () => { cls.rules = cls.rules.filter(x => x !== r); changed(); } }, 'Remove'))));
+
+    const sorted = cls.students.slice().sort((x, y) => x.name.localeCompare(y.name));
+    const isTables = form.type === 'tables', isSeat = form.type === 'seat';
+    const options = isTables
+      ? cls.layout.tables.slice().sort((x, y) => x.num - y.num).map(t => [t.id, tableName(t)])
+      : sorted.filter(s => s.id !== form.a).map(s => [s.id, s.name]);
+    const picker = isSeat ? null : h('div', { class: 'picker' }, options.map(([id, label]) => h('label', {}, h('input', {
+      type: 'checkbox', checked: form.picks.has(id),
+      onchange: e => { e.target.checked ? form.picks.add(id) : form.picks.delete(id); },
+    }), ' ' + label)));
+
+    const add = () => {
+      if (!form.a) return alert('Choose a student.');
+      const picks = [...form.picks].filter(id => options.some(o => o[0] === id));
+      if (isSeat) {
+        const seat = seatOf(cls, form.a);
+        if (!seat) return alert('That student is not in a seat yet.');
+        cls.rules.push({ type: 'seat', a: form.a, seat });
+      } else {
+        if (!picks.length) return alert('Tick at least one ' + (isTables ? 'table.' : 'student.'));
+        cls.rules.push(isTables ? { type: 'tables', a: form.a, tables: picks } : { type: form.type, a: form.a, others: picks });
+      }
+      form.picks = new Set(); changed();
+    };
+
+    $('rulesBody').replaceChildren(
+      h('p', { class: 'muted', style: 'margin:0' }, `Rules for ${cls.name}. Every shuffle follows them. This window cannot be opened while presenting.`),
+      status, list,
+      h('div', { class: 'ruleform' },
+        h('div', { class: 'row' },
+          h('select', { onchange: e => { form.a = e.target.value; form.picks.delete(form.a); renderRules(); } },
+            h('option', { value: '' }, 'Student…'), sorted.map(s => h('option', { value: s.id, selected: s.id === form.a }, s.name))),
+          h('select', { onchange: e => { form.type = e.target.value; form.picks = new Set(); renderRules(); } },
+            RULE_TYPES.map(([v, label]) => h('option', { value: v, selected: v === form.type }, label)))),
+        picker,
+        h('div', { class: 'row' }, h('button', { class: 'primary', onclick: add }, 'Add rule'))),
+      h('label', {}, h('input', {
+        type: 'checkbox', checked: cls.across,
+        onchange: e => { cls.across = e.target.checked; changed(); },
+      }), ' Sitting directly across also counts as "beside"'),
+    );
+  }
+  let logoClicks = 0, logoTimer = null;
+  $('logo').onclick = () => {
+    logoClicks++; clearTimeout(logoTimer);
+    logoTimer = setTimeout(() => { logoClicks = 0; }, 600);
+    if (logoClicks >= 3) { logoClicks = 0; openRules(); }
+  };
+  $('rulesDialog').addEventListener('close', () => render());
+
+  window.addEventListener('keydown', e => {
+    if (pres) {
+      if (e.key === 'Escape') closePresent();
+      else if (e.key === ' ' || e.key.toLowerCase() === 's') { e.preventDefault(); presentShuffle(); }
+      else if (e.key.toLowerCase() === 'f') $('pFlip').click();
+      return;
+    }
+    if (e.altKey && e.code === 'KeyR') { e.preventDefault(); openRules(); }
+    else if (e.key === 'Escape' && ui.sel) { ui.sel = null; render(); }
+  });
+  document.addEventListener('fullscreenchange', () => { if (pres) renderPresent(); });
+  window.addEventListener('resize', () => { pres ? renderPresent() : render(); });
+
+  /* ---------------- main ---------------- */
+  function render() {
+    const cls = cur();
+    renderHeader();
+    document.querySelector('.viewtoggle').style.visibility = (ui.tab === 'seating' || ui.tab === 'layout') ? '' : 'hidden';
+    if (ui.tab === 'seating') renderSeating(cls);
+    else if (ui.tab === 'layout') renderLayout(cls);
+    else if (ui.tab === 'students') renderStudents(cls);
+    else if (ui.tab === 'history') renderHistory(cls);
+    else renderPrint();
+  }
+  state.classes.forEach(prune);
+  render();
+})();

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seating Planner</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1 id="logo">Seating Planner</h1>
+  <select id="classSelect" title="Class"></select>
+  <button id="btnNewClass">New class</button>
+  <button id="btnRenameClass">Rename</button>
+  <button id="btnDupClass">Duplicate</button>
+  <button id="btnDelClass">Delete</button>
+  <span class="spacer"></span>
+  <button id="btnBackup" title="Download all classes as a backup file">Backup</button>
+  <button id="btnRestore" title="Load a backup file">Restore</button>
+  <input type="file" id="fileRestore" accept="application/json,.json" hidden>
+</header>
+<nav>
+  <button data-tab="seating">Seating</button>
+  <button data-tab="layout">Desk layout</button>
+  <button data-tab="students">Students</button>
+  <button data-tab="history">History</button>
+  <button data-tab="print">Print / PDF</button>
+  <span class="spacer"></span>
+  <label class="viewtoggle"><input type="checkbox" id="chkFlip"> Students' view</label>
+  <button id="btnPresent" class="primary">Present</button>
+</nav>
+<main>
+  <aside id="sidebar"></aside>
+  <section id="stage"></section>
+</main>
+
+<div id="present" hidden>
+  <div id="presentTitle"></div>
+  <div id="presentStage"></div>
+  <div id="presentMsg"></div>
+  <div id="presentControls">
+    <button id="pShuffle">Shuffle</button>
+    <button id="pFlip">Flip view</button>
+    <button id="pExit">Exit</button>
+  </div>
+</div>
+
+<dialog id="rulesDialog">
+  <form method="dialog" class="dlghead">
+    <h2>Seating rules</h2>
+    <button>Close</button>
+  </form>
+  <div id="rulesBody"></div>
+</dialog>
+
+<script src="js/solver.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
