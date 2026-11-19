@@ -5,9 +5,11 @@
   'use strict';
   const G = typeof module !== 'undefined' && module.exports ? require('./solver.js') : root.SeatSolver;
 
-  const W = { rule: 1000, apart: 300, front: 40, friend: 20, max: 25, spread: 8, even: 10 };
+  const W = { rule: 1000, apart: 300, front: 40, friend: 20, max: 25, spread: 8, even: 10, repeat: 4 };
 
-  /* opts: { students:[{id,name}], layout, closed, rules, across, prefs, roomH, seatH }
+  /* opts: { students:[{id,name}], layout, closed, rules, across, prefs, roomH, seatH, fixed, recent }
+     fixed: { studentId: seatId } for pinned students, who are never moved.
+     recent: [{ weight, table: { studentId: tableId } }], earlier plans whose tablemates to avoid repeating.
      prefs: { friends:'with'|'apart'|'ignore', students:{id:{friends,apart,tags,front}}, tags:[{id,name,mode,max}] } */
   function prepare(opts) {
     const closed = new Set(opts.closed || []);
@@ -40,6 +42,24 @@
     const tags = (prefs.tags || []).map(t => ({ tag: t, who: ids.filter(s => ((P[s] || {}).tags || []).includes(t.id)) }));
     const rules = (opts.rules || []).filter(r => valid.has(r.a));
 
+    // Pinned students, plus hidden "stays in their seat" rules, are fixed in place.
+    const fixed = {}, taken = new Set();
+    const fix = (s, seat) => { if (valid.has(s) && seat in tableOf && !fixed[s] && !taken.has(seat)) { fixed[s] = seat; taken.add(seat); } };
+    for (const [s, seat] of Object.entries(opts.fixed || {})) fix(s, seat);
+    for (const r of rules) if (r.type === 'seat') fix(r.a, r.seat);
+
+    // Rotation: a weight for every pair who shared a table in a recent plan.
+    const n = ids.length, idx = {};
+    ids.forEach((s, i) => { idx[s] = i; });
+    const recent = (opts.recent || []).filter(pl => pl.weight > 0);
+    const pw = recent.length ? new Float64Array(n * n) : null;
+    for (const pl of recent) {
+      const by = {};
+      for (const s in pl.table) if (s in idx) (by[pl.table[s]] = by[pl.table[s]] || []).push(idx[s]);
+      for (const m of Object.values(by))
+        for (let i = 0; i < m.length; i++) for (let j = 0; j < m.length; j++) if (i !== j) pw[m[i] * n + m[j]] += pl.weight;
+    }
+
     function ruleBroken(r, pos) {
       const pa = pos[r.a];
       if (!pa) return false;
@@ -53,9 +73,17 @@
     /* pos: studentId -> seatId. Returns the cost and, if asked, a readable report. */
     function score(pos, wantReport) {
       const tOf = s => pos[s] ? tableOf[pos[s]] : null;
-      const count = {};
-      for (const s of ids) { const t = tOf(s); if (t) count[t] = (count[t] || 0) + 1; }
+      const count = {}, members = {};
+      for (const s of ids) { const t = tOf(s); if (t) { count[t] = (count[t] || 0) + 1; (members[t] = members[t] || []).push(idx[s]); } }
       let cost = 0;
+      const repeats = [];
+      if (pw) for (const t in members) {
+        const m = members[t];
+        for (let i = 0; i < m.length; i++) for (let j = i + 1; j < m.length; j++) {
+          const w = pw[m[i] * n + m[j]];
+          if (w) { cost += W.repeat * w; if (wantReport) repeats.push([ids[m[i]], ids[m[j]], w]); }
+        }
+      }
       for (const t of tables) cost += W.even * (count[t.id] || 0) ** 2;
 
       const brokenRules = rules.filter(r => ruleBroken(r, pos));
@@ -98,10 +126,40 @@
           apart: { total: apart.length, broken: brokenApart },
           front: { total: wantsFront.length, missed: frontMissed },
           tags: tagRows, rules: { total: rules.length, broken: brokenRules.length },
+          repeat: { plans: recent.length, pairs: repeats.sort((a, b) => b[2] - a[2]) },
         },
       };
     }
-    return { seats, ids, score };
+    /* Each unmet rule or note as its own item, so a move can be checked for what it breaks. */
+    function issues(pos) {
+      const tOf = s => pos[s] ? tableOf[pos[s]] : null;
+      const out = [];
+      rules.forEach((r, i) => { if (ruleBroken(r, pos)) out.push({ key: 'r' + i, kind: 'rule', rule: r, who: [r.a] }); });
+      for (const [a, b] of apart) if (tOf(a) && tOf(a) === tOf(b)) out.push({ key: 'a' + a + b, kind: 'apart', who: [a, b] });
+      for (const s of wantsFront) if (tOf(s) && !isFront(tOf(s))) out.push({ key: 'f' + s, kind: 'front', who: [s] });
+      if (mode === 'with') for (const s of ids)
+        if (friends[s].length && tOf(s) && !friends[s].some(f => tOf(f) === tOf(s))) out.push({ key: 'l' + s, kind: 'lonely', who: [s] });
+      if (mode === 'apart') for (const s of ids) for (const f of friends[s])
+        if (tOf(s) && tOf(f) === tOf(s) && !(friends[f].includes(s) && f < s)) out.push({ key: 'p' + [s, f].sort().join(), kind: 'friends', who: [s, f] });
+      for (const { tag, who } of tags) {
+        if (tag.mode !== 'max') continue;
+        const per = {};
+        for (const s of who) { const t = tOf(s); if (t) (per[t] = per[t] || []).push(s); }
+        for (const t in per) if (per[t].length > (tag.max || 1)) out.push({ key: 't' + tag.id + t, kind: 'tag', tag, table: t, who: per[t] });
+      }
+      return out;
+    }
+    return { seats, ids, score, issues, fixed };
+  }
+
+  /* Returns a function that lists the unmet rules and notes for an assignment (seatId -> studentId). */
+  function checker(opts) {
+    const p = prepare(opts);
+    return assignment => {
+      const pos = {};
+      for (const seat in assignment) pos[assignment[seat]] = seat;
+      return p.issues(pos);
+    };
   }
 
   /* Report on an existing plan (assignment: seatId -> studentId). */
@@ -115,20 +173,25 @@
      the odd worse move early on so the search doesn't get stuck. */
   function build(opts) {
     const rnd = opts.rnd || Math.random;
-    const { seats, ids, score } = prepare(opts);
+    const { seats, ids, score, fixed } = prepare(opts);
     if (ids.length > seats.length) return { ok: false, reason: 'seats' };
     if (!ids.length) return { ok: false, reason: 'students' };
-    const seatIds = seats.map(s => s.id);
+    const pinnedSeats = new Set(Object.values(fixed));
+    const seatIds = seats.map(s => s.id).filter(s => !pinnedSeats.has(s));
+    const free = ids.filter(s => !fixed[s]);
+    if (free.length > seatIds.length) return { ok: false, reason: 'seats' };
+    const start = () => { const pos = Object.assign({}, fixed), occ = {}; for (const s in fixed) occ[fixed[s]] = s; return { pos, occ }; };
+    if (!free.length) return { ok: true, assignment: start().occ };
     let best = null, bestCost = Infinity;
     const rounds = opts.rounds || 5, steps = opts.steps || 20000;
     for (let round = 0; round < rounds; round++) {
       const order = G.shuffle(seatIds.slice(), rnd);
-      const pos = {}, occ = {};
-      ids.forEach((s, i) => { pos[s] = order[i]; occ[order[i]] = s; });
+      const { pos, occ } = start();
+      free.forEach((s, i) => { pos[s] = order[i]; occ[order[i]] = s; });
       let cost = score(pos);
       for (let i = 0; i < steps; i++) {
         const temp = 30 * Math.pow(0.003, i / steps);
-        const a = ids[Math.floor(rnd() * ids.length)];
+        const a = free[Math.floor(rnd() * free.length)];
         const from = pos[a], to = seatIds[Math.floor(rnd() * seatIds.length)];
         if (from === to) continue;
         const b = occ[to];
@@ -146,7 +209,7 @@
     return { ok: true, assignment: best };
   }
 
-  const api = { build, evaluate };
+  const api = { build, evaluate, checker };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SeatBuilder = api;
 })(typeof window !== 'undefined' ? window : globalThis);

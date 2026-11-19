@@ -171,3 +171,19 @@ table.notes td.mid { text-align: center; }
 .report li.good::before { content: "\2713"; position: absolute; left: 10px; color: var(--ok); font-weight: 700; }
 .report li.bad::before { content: "!"; position: absolute; left: 12px; color: #b25e00; font-weight: 700; }
 .seat.mark > div { border-color: #e08a00; border-width: 2px; background: #fff7ea; }
+
+/* ---------- pins and live checks ---------- */
+.seat.pinned::after { content: "\1F4CC"; position: absolute; top: calc(var(--u) * -.08); right: calc(var(--u) * -.02); font-size: calc(var(--u) * .42); line-height: 1; }
+.seat.pinned > div { border-color: #8a94a6; }
+.mode-seat .seat.pinned { cursor: default; }
+.seat.hint-bad > div { background: #fdecea; border-color: #e3a29b; }
+.seat.hint-good > div { background: #e3f5ea; border-color: #6fbf8e; }
+.seat.locked > div { opacity: .55; }
+.checkhead { display: flex; align-items: baseline; justify-content: space-between; }
+.checkhead label { display: flex; gap: 4px; align-items: center; }
+ul.checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+ul.checks li { background: #fff1e0; border-radius: 6px; padding: 5px 8px; font-size: 12.5px; }
+.movenote { position: fixed; z-index: 30; max-width: 300px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.15); padding: 8px 10px; font-size: 12.5px; pointer-events: none; display: flex; flex-direction: column; gap: 3px; }
+.movenote[hidden] { display: none; }
+.movenote .bad { color: var(--warn); }
+.movenote .good { color: var(--ok); }

@@ -39,7 +39,7 @@
   let state = loadState();
   const ui = { tab: 'seating', flip: false, sel: null, selTable: null, closing: false, printIds: null, printFlip: false };
   const BKEY = 'seatingplanner.lastBackup', PKEY = 'seatingplanner.prefs';
-  const prefs = Object.assign({ style: 'random', speed: 'normal' }, (() => { try { return JSON.parse(localStorage.getItem(PKEY)) || {}; } catch (e) { return {}; } })());
+  const prefs = Object.assign({ style: 'random', speed: 'normal', checks: true }, (() => { try { return JSON.parse(localStorage.getItem(PKEY)) || {}; } catch (e) { return {}; } })());
 
   // Every save() that changes something becomes one undo step.
   let savedJson = JSON.stringify(state);
@@ -68,6 +68,9 @@
   const studentName = (cls, id) => (cls.students.find(s => s.id === id) || {}).name || '';
   const seatOf = (cls, sid) => Object.keys(cls.assignment).find(k => cls.assignment[k] === sid);
   const tableById = (cls, id) => cls.layout.tables.find(t => t.id === id);
+  const pinsOf = cls => cls.pins || (cls.pins = []);
+  /* Pinned students who are in a seat: { studentId: seatId }. */
+  const pinMap = cls => { const m = {}; for (const sid of pinsOf(cls)) { const seat = seatOf(cls, sid); if (seat) m[sid] = seat; } return m; };
   const itemsOf = cls => cls.layout.items || (cls.layout.items = []);
   const closedOf = cls => cls.layout.closed || (cls.layout.closed = []);
   const openSeats = cls => listSeats(cls.layout).filter(s => !closedOf(cls).includes(s.id));
@@ -80,6 +83,7 @@
     cls.layout.closed = closedOf(cls).filter(id => all.has(id));
     const seats = new Set(openSeats(cls).map(s => s.id));
     const studs = new Set(cls.students.map(s => s.id));
+    cls.pins = pinsOf(cls).filter(id => studs.has(id));
     const tabs = new Set(cls.layout.tables.map(t => t.id));
     const seen = new Set();
     for (const [seat, sid] of Object.entries(cls.assignment)) {
@@ -97,8 +101,24 @@
 
   function snapshot(cls, name, auto) {
     cls.versions.unshift({ id: uid(), name, ts: Date.now(), auto: !!auto, layout: clone(cls.layout), assignment: clone(cls.assignment) });
-    const autos = cls.versions.filter(v => v.auto);
-    if (autos.length > 20) cls.versions = cls.versions.filter(v => !v.auto || autos.indexOf(v) < 20);
+    // Keep the 20 newest automatic saves, plus the last plan of every day so rotation can still see older plans.
+    const days = new Set(), lastOfDay = new Set();
+    for (const v of cls.versions) { const d = new Date(v.ts).toDateString(); if (!days.has(d)) { days.add(d); lastOfDay.add(v); } }
+    let autos = 0;
+    cls.versions = cls.versions.filter(v => !v.auto || ++autos <= 20 || lastOfDay.has(v));
+  }
+  /* The plan each earlier day ended with, newest first: the plans students actually sat in.
+     Today's plans are left out because they may still be drafts. */
+  function recentPlans(cls, n) {
+    const today = new Date().toDateString(), days = new Set(), out = [];
+    for (const v of cls.versions) {
+      if (out.length >= n) break;
+      const d = new Date(v.ts).toDateString();
+      if (d === today || days.has(d)) continue;
+      days.add(d);
+      if (Object.keys(v.assignment).length) out.push(v);
+    }
+    return out;
   }
 
   /* ---------------- room rendering ---------------- */
@@ -165,9 +185,10 @@
         const name = sid ? studentName(cls, sid) : '';
         const inner = h('div', {}, shut ? '\u2715' : name);
         if (name) inner.style.fontSize = U(nameScale(name).toFixed(3));
+        const pinned = sid && o.pins && o.pins.has(sid);
         const sEl = h('div', {
-          class: 'seat' + (shut ? ' closed' : name ? '' : ' empty') + (o.mark && o.mark.has(sid) ? ' mark' : '') + (ui.sel && ui.sel === sid && o.mode === 'seat' ? ' sel' : ''),
-          'data-seat': id, draggable: o.mode === 'seat' && !!sid ? 'true' : null,
+          class: 'seat' + (pinned ? ' pinned' : '') + (shut ? ' closed' : name ? '' : ' empty') + (o.mark && o.mark.has(sid) ? ' mark' : '') + (ui.sel && ui.sel === sid && o.mode === 'seat' ? ' sel' : ''),
+          'data-seat': id, draggable: o.mode === 'seat' && !!sid && !pinned ? 'true' : null,
         }, inner);
         const isEnd = e && e.r === r && e.c === c;
         const sx = isEnd ? ex : t.x + c * SW, sy = isEnd ? ey : t.y + r * SH;
@@ -245,76 +266,175 @@
     } catch (err) { alert('That file is not a seating planner backup.'); }
   };
   document.querySelectorAll('nav button[data-tab]').forEach(b => {
-    b.onclick = () => { ui.tab = b.dataset.tab; ui.sel = null; ui.closing = false; render(); };
+    b.onclick = () => { ui.tab = b.dataset.tab; ui.sel = null; ui.seatMode = null; render(); };
   });
   $('chkFlip').onchange = e => { ui.flip = e.target.checked; render(); };
 
   /* ---------------- seating tab ---------------- */
-  function place(cls, sid, seat) {
-    const from = seatOf(cls, sid), occ = cls.assignment[seat];
-    if (from === seat) return;
-    if (from) delete cls.assignment[from];
-    if (occ && from) cls.assignment[from] = occ;
-    cls.assignment[seat] = sid;
+  /* The assignment after moving a student to a seat; whoever was there swaps into their old seat. */
+  function moved(asg, sid, seat) {
+    const a = Object.assign({}, asg);
+    const from = Object.keys(a).find(k => a[k] === sid), occ = a[seat];
+    if (from === seat) return a;
+    if (from) delete a[from];
+    if (occ && from) a[from] = occ;
+    a[seat] = sid;
+    return a;
   }
+  function place(cls, sid, seat) { cls.assignment = moved(cls.assignment, sid, seat); }
   function unseat(cls, sid) { const s = seatOf(cls, sid); if (s) delete cls.assignment[s]; }
+
+  function issueText(cls, i) {
+    const n = id => studentName(cls, id);
+    switch (i.kind) {
+      case 'rule': return 'Rule: ' + ruleText(cls, i.rule);
+      case 'apart': return `${n(i.who[0])} and ${n(i.who[1])} should be at different tables`;
+      case 'front': return `${n(i.who[0])} needs a front table`;
+      case 'lonely': return `${n(i.who[0])} has no friend at their table`;
+      case 'friends': return `${n(i.who[0])} and ${n(i.who[1])} are friends at the same table`;
+      case 'tag': { const t = tableById(cls, i.table); return `${t ? tableName(t) : 'A table'} has ${i.who.length} ${i.tag.name} (limit ${i.tag.max || 1})`; }
+    }
+    return '';
+  }
+
+  // Floating note that follows the pointer while a student is being moved.
+  const moveNote = h('div', { class: 'movenote', hidden: true });
+  document.body.append(moveNote);
 
   function renderSeating(cls) {
     const seated = new Set(Object.values(cls.assignment));
     const unseated = cls.students.filter(s => !seated.has(s.id));
+    const pins = new Set(pinsOf(cls));
     const done = () => { ui.sel = null; save(); render(); };
+    let dragging = null;
 
     const chips = h('div', {
       class: 'chips',
       onclick: e => { if (e.target === chips && ui.sel) { unseat(cls, ui.sel); done(); } },
       ondragover: e => { e.preventDefault(); chips.classList.add('over'); },
       ondragleave: () => chips.classList.remove('over'),
-      ondrop: e => { e.preventDefault(); const sid = e.dataTransfer.getData('text/plain'); if (sid) { unseat(cls, sid); done(); } },
+      ondrop: e => { e.preventDefault(); const sid = e.dataTransfer.getData('text/plain'); if (sid && !pins.has(sid)) { unseat(cls, sid); done(); } },
     }, unseated.map(s => h('span', {
       class: 'chip' + (ui.sel === s.id ? ' sel' : ''), draggable: 'true',
       onclick: () => { ui.sel = ui.sel === s.id ? null : s.id; render(); },
-      ondragstart: e => { e.dataTransfer.setData('text/plain', s.id); },
+      ondragstart: e => { e.dataTransfer.setData('text/plain', s.id); dragging = s.id; hints(s.id); },
+      ondragend: () => { dragging = null; clearHints(); },
     }, s.name)));
+
+    // Live checks against the seating rules and the notes from Build a plan.
+    const check = prefs.checks ? window.SeatBuilder.checker(buildOpts(cls)) : null;
+    const current = check ? check(cls.assignment) : [];
+    const curKeys = new Set(current.map(i => i.key));
+    const b = buildPrefs(cls);
+    const hasNotes = cls.rules.length || b.tags.some(t => t.mode === 'max') ||
+      Object.values(b.students).some(p => p.front || p.apart.length || (b.friends !== 'ignore' && p.friends.length));
 
     const nSeats = openSeats(cls).length;
     const shut = closedOf(cls);
-    fill($('sidebar'), 
+    const mode = ui.seatMode;
+    const modeBtn = (m, on, off) => h('button', { class: mode === m ? 'on' : '', onclick: () => { ui.seatMode = mode === m ? null : m; ui.sel = null; render(); } }, mode === m ? on : off);
+    fill($('sidebar'),
       h('button', { class: 'primary', onclick: () => doShuffle(cls) }, 'Shuffle seats'),
-      h('button', { onclick: () => { if (confirm('Remove everyone from their seats?')) { cls.assignment = {}; done(); } } }, 'Clear all seats'),
+      h('button', {
+        onclick: () => {
+          if (!confirm('Remove everyone from their seats?' + (pins.size ? ' Pinned students stay.' : ''))) return;
+          const keep = pinMap(cls); cls.assignment = {};
+          for (const sid in keep) cls.assignment[keep[sid]] = sid;
+          done();
+        },
+      }, 'Clear all seats'),
       h('button', {
         onclick: () => {
           const name = prompt('Name for this saved plan:', new Date().toLocaleDateString());
           if (name) { snapshot(cls, name.trim() || 'Saved plan'); save(); alert('Saved. Find it under History.'); }
         },
       }, 'Save this plan…'),
-      h('button', { class: ui.closing ? 'on' : '', onclick: () => { ui.closing = !ui.closing; ui.sel = null; render(); } },
-        ui.closing ? 'Done closing desks' : 'Close or reopen desks…'),
-      ui.closing && h('p', { class: 'hint' }, 'Click a desk to close it, or a closed desk to reopen it. Closed desks are never used.'),
-      h('p', { class: 'hint' }, `${cls.students.length} students, ${nSeats} seats` + (shut.length ? `, ${shut.length} closed.` : '.')),
+      modeBtn('pin', 'Done pinning', 'Pin or unpin students…'),
+      mode === 'pin' && h('p', { class: 'hint' }, 'Click a student to pin them to their seat. Pinned students can\'t be moved, and Shuffle and Build leave them where they are.'),
+      modeBtn('close', 'Done closing desks', 'Close or reopen desks…'),
+      mode === 'close' && h('p', { class: 'hint' }, 'Click a desk to close it, or a closed desk to reopen it. Closed desks are never used.'),
+      h('p', { class: 'hint' }, `${cls.students.length} students, ${nSeats} seats` + (shut.length ? `, ${shut.length} closed` : '') + (pins.size ? `, ${pins.size} pinned.` : '.')),
+      h('div', { class: 'checkhead' }, h('h3', {}, 'Checks' + (check && current.length ? ` (${current.length})` : '')),
+        h('label', { class: 'hint' }, h('input', {
+          type: 'checkbox', checked: prefs.checks,
+          onchange: e => { prefs.checks = e.target.checked; localStorage.setItem(PKEY, JSON.stringify(prefs)); render(); },
+        }), ' Show')),
+      check && (current.length
+        ? h('ul', { class: 'checks' }, current.map(i => h('li', {}, issueText(cls, i))))
+        : h('p', { class: 'hint' }, hasNotes ? 'Every rule and note is met.' : 'No rules or notes to check yet. Add notes on the Build a plan tab.')),
+      check && h('p', { class: 'hint' }, 'While you move a student, seats turn red if they would break something and green if they would fix something.'),
       h('h3', {}, `Not seated (${unseated.length})`), chips,
       h('p', { class: 'hint' }, 'Drag a name onto a seat, or click a name and then a seat. Drop one student on another to swap them.'),
     );
 
-    const wrap = renderRoom(cls, { flip: ui.flip, mode: 'seat' });
+    const wrap = renderRoom(cls, { flip: ui.flip, mode: 'seat', pins });
+
+    function clearHints() {
+      wrap.querySelectorAll('.seat').forEach(el => { el.classList.remove('hint-bad', 'hint-good', 'locked'); el._hint = null; });
+      showMove(null);
+    }
+    function hints(sid) {
+      clearHints();
+      if (!sid) return;
+      wrap.querySelectorAll('.seat').forEach(el => {
+        const seat = el.dataset.seat, occ = cls.assignment[seat];
+        if (shut.includes(seat) || occ === sid) return;
+        if (occ && pins.has(occ)) { el.classList.add('locked'); return; }
+        if (!check) return;
+        const after = check(moved(cls.assignment, sid, seat)), keys = new Set(after.map(i => i.key));
+        el._hint = { sid, added: after.filter(i => !curKeys.has(i.key)), fixed: current.filter(i => !keys.has(i.key)) };
+        if (el._hint.added.length) el.classList.add('hint-bad');
+        else if (el._hint.fixed.length) el.classList.add('hint-good');
+      });
+    }
+    function showMove(el, x, y) {
+      const hi = el && el._hint;
+      if (!hi || (!hi.added.length && !hi.fixed.length)) { moveNote.hidden = true; return; }
+      fill(moveNote, h('b', {}, `Moving ${studentName(cls, hi.sid)} here`),
+        hi.added.map(i => h('div', { class: 'bad' }, '✗ ' + issueText(cls, i))),
+        hi.fixed.map(i => h('div', { class: 'good' }, '✓ Fixes: ' + issueText(cls, i))));
+      moveNote.hidden = false;
+      moveNote.style.left = Math.min(x + 18, window.innerWidth - moveNote.offsetWidth - 8) + 'px';
+      moveNote.style.top = Math.min(y + 18, window.innerHeight - moveNote.offsetHeight - 8) + 'px';
+    }
+
     wrap.querySelectorAll('.seat').forEach(el => {
       const seat = el.dataset.seat;
+      const occ = cls.assignment[seat];
+      const blocked = () => shut.includes(seat) || (occ && pins.has(occ));
       el.onclick = () => {
-        const occ = cls.assignment[seat];
-        if (ui.closing) {
+        if (mode === 'close') {
           const i = shut.indexOf(seat);
           if (i >= 0) shut.splice(i, 1); else { shut.push(seat); delete cls.assignment[seat]; }
           prune(cls); return done();
         }
-        if (shut.includes(seat)) return;
+        if (mode === 'pin') {
+          if (!occ) return;
+          cls.pins = pins.has(occ) ? pinsOf(cls).filter(x => x !== occ) : [...pinsOf(cls), occ];
+          return done();
+        }
+        if (blocked()) return;
         if (ui.sel) { place(cls, ui.sel, seat); done(); }
         else if (occ) { ui.sel = occ; render(); }
       };
-      el.ondragstart = e => { e.dataTransfer.setData('text/plain', cls.assignment[seat]); };
-      el.ondragover = e => { e.preventDefault(); el.classList.add('over'); };
-      el.ondragleave = () => el.classList.remove('over');
-      el.ondrop = e => { e.preventDefault(); const sid = e.dataTransfer.getData('text/plain'); if (sid && !shut.includes(seat)) { place(cls, sid, seat); done(); } };
+      el.onmousemove = e => { if (ui.sel && !mode) showMove(el, e.clientX, e.clientY); };
+      el.onmouseleave = () => { if (!dragging) showMove(null); };
+      el.ondragstart = e => { e.dataTransfer.setData('text/plain', occ); dragging = occ; hints(occ); };
+      el.ondragend = () => { dragging = null; clearHints(); };
+      el.ondragover = e => {
+        if (blocked()) return;
+        e.preventDefault(); el.classList.add('over');
+        showMove(el, e.clientX, e.clientY);
+      };
+      el.ondragleave = () => { el.classList.remove('over'); showMove(null); };
+      el.ondrop = e => {
+        e.preventDefault(); showMove(null);
+        const sid = e.dataTransfer.getData('text/plain');
+        if (sid && !blocked() && !pins.has(sid)) { place(cls, sid, seat); done(); }
+      };
     });
     showRoom(wrap);
+    if (ui.sel && !mode) hints(ui.sel);
   }
   function showRoom(wrap) {
     const st = $('stage');
@@ -330,7 +450,8 @@
       prev = {};
       for (const seat in ref) prev[ref[seat]] = seat.split(':')[0];
     }
-    return solve({ students: cls.students, layout: cls.layout, rules: cls.rules, across: cls.across, closed: closedOf(cls), prev });
+    const pinRules = Object.entries(pinMap(cls)).map(([a, seat]) => ({ type: 'seat', a, seat }));
+    return solve({ students: cls.students, layout: cls.layout, rules: cls.rules.concat(pinRules), across: cls.across, closed: closedOf(cls), prev });
   }
   function doShuffle(cls) {
     if (!cls.students.length) return alert('Add students first (Students tab).');
@@ -588,10 +709,17 @@
     }
     return b;
   }
-  const buildOpts = cls => ({
-    students: cls.students, layout: cls.layout, closed: closedOf(cls), rules: cls.rules, across: cls.across,
-    prefs: buildPrefs(cls), roomH: ROOM_H, seatH: SH,
-  });
+  const rotationOf = b => b.rotation == null ? 3 : b.rotation;
+  const buildOpts = cls => {
+    const b = buildPrefs(cls);
+    const plans = recentPlans(cls, rotationOf(b));
+    return {
+      students: cls.students, layout: cls.layout, closed: closedOf(cls), rules: cls.rules, across: cls.across,
+      prefs: b, roomH: ROOM_H, seatH: SH, fixed: pinMap(cls),
+      // The most recent plan counts most.
+      recent: plans.map((v, i) => ({ weight: plans.length - i, table: Object.fromEntries(Object.entries(v.assignment).map(([seat, sid]) => [sid, seat.split(':')[0]])) })),
+    };
+  };
   function renderBuild(cls) {
     const b = buildPrefs(cls);
     const sp = id => b.students[id] || (b.students[id] = { friends: [], apart: [], tags: [], front: false });
@@ -613,7 +741,17 @@
       h('button', { id: 'btnBuild', class: 'primary', onclick: runBuild }, ui.buildView === 'result' ? 'Build another' : 'Build the plan'),
       h('button', { onclick: () => { ui.buildView = ui.buildView === 'result' ? 'edit' : 'result'; render(); } },
         ui.buildView === 'result' ? 'Back to the notes' : 'Check the plan on screen'),
-      h('p', { class: 'hint' }, 'Building replaces the current seating; Undo brings it back. Closed desks and seating rules are always followed.'),
+      h('p', { class: 'hint' }, 'Building replaces the current seating; Undo brings it back. Pinned students stay put, and closed desks and seating rules are always followed.'),
+      h('h3', {}, 'Rotation'),
+      h('select', { onchange: e => { b.rotation = +e.target.value; keep(); } },
+        [[0, 'Off'], [1, 'New tablemates vs the last plan'], [2, 'New tablemates vs the last 2 plans'], [3, 'New tablemates vs the last 3 plans'], [5, 'New tablemates vs the last 5 plans']]
+          .map(([v, l]) => h('option', { value: v, selected: rotationOf(b) === v }, l))),
+      rotationOf(b) > 0 && (() => {
+        const plans = recentPlans(cls, rotationOf(b));
+        return h('p', { class: 'hint' }, 'Counts the plan each earlier day ended with, from History. ' + (plans.length
+          ? 'Using: ' + plans.map(v => new Date(v.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })).join(', ') + '.'
+          : 'No earlier plans yet, so this starts working once you have used a plan.'));
+      })(),
       h('h3', {}, 'Friends'),
       h('select', { onchange: e => { b.friends = e.target.value; keep(); } },
         [['with', 'Seat everyone with at least one friend'], ['apart', 'Keep friends at different tables'], ['ignore', 'Ignore friends']]
@@ -681,6 +819,15 @@
       items.push(line(!t.over, `${t.tag.name} per table: ${counts}.` + (t.over ? ` Over the limit of ${t.tag.max}.` : '')));
     }
     if (r.rules.broken) items.push(line(false, `${r.rules.broken} seating rule(s) could not be met.`));
+    if (r.repeat.plans) {
+      const pairs = r.repeat.pairs, plans = r.repeat.plans === 1 ? 'the last plan' : `the last ${r.repeat.plans} plans`;
+      const shown = pairs.slice(0, 6).map(([a, c]) => studentName(cls, a) + ' & ' + studentName(cls, c)).join('; ');
+      items.push(line(!pairs.length, pairs.length
+        ? `${pairs.length} pair(s) are tablemates again from ${plans}: ${shown}${pairs.length > 6 ? '; …' : ''}.`
+        : `Nobody shares a table with anyone from ${plans}.`));
+    }
+    const pinned = pinsOf(cls).filter(id => seatOf(cls, id)).length;
+    if (pinned) items.push(h('li', {}, `${pinned} pinned student(s) kept in their seats.`));
     if (!items.length) items.push(h('li', {}, 'No notes yet, so there is nothing to check. Add friends or tags and build again.'));
 
     const mark = new Set([...r.friend.lonely, ...r.front.missed, ...r.apart.broken.flat(), ...r.friend.together.flat()]);
@@ -981,6 +1128,7 @@
   /* ---------------- main ---------------- */
   function render() {
     const cls = cur();
+    moveNote.hidden = true;
     renderHeader();
     document.querySelector('.viewtoggle').style.visibility = (ui.tab === 'seating' || ui.tab === 'layout' || (ui.tab === 'build' && ui.buildView === 'result')) ? '' : 'hidden';
     if (ui.tab === 'seating') renderSeating(cls);
