@@ -291,7 +291,7 @@
       case 'rule': return (i.rule.soft ? 'Prefer: ' : 'Must: ') + ruleText(cls, i.rule);
       case 'apart': return `${n(i.who[0])} and ${n(i.who[1])} should be at different tables`;
       case 'front': return `${n(i.who[0])} needs a front table`;
-      case 'lonely': return `${n(i.who[0])} has no friend at their table`;
+      case 'lonely': return `${n(i.who[0])} has no friend ${i.beside ? 'beside them' : 'at their table'}`;
       case 'friends': return `${n(i.who[0])} and ${n(i.who[1])} are friends at the same table`;
       case 'tag': { const t = tableById(cls, i.table); return `${t ? tableName(t) : 'A table'} has ${i.who.length} ${i.tag.name} (limit ${i.tag.max || 1})`; }
     }
@@ -329,8 +329,8 @@
     const b = buildPrefs(cls);
     const report = check && window.SeatBuilder.evaluate(Object.assign({ assignment: cls.assignment }, buildOpts(cls)));
     const fr = report && report.friend;
-    const friendLine = fr && report.mode === 'with' && fr.asked && h('p', { class: 'summary' },
-      `${fr.asked - fr.lonely.length} of ${fr.asked} students have a friend at their table.`);
+    const friendLine = fr && (report.mode === 'with' || report.mode === 'beside') && fr.asked && h('p', { class: 'summary' },
+      `${fr.asked - fr.lonely.length} of ${fr.asked} students have a friend ${report.mode === 'beside' ? 'beside them' : 'at their table'}.`);
     const hasNotes = cls.rules.length ||
       Object.values(b.students).some(p => p.front || p.apart.length || (b.friends !== 'ignore' && p.friends.length));
 
@@ -442,9 +442,34 @@
     fit(wrap, st.clientWidth - 40, st.clientHeight - 50);
   }
 
-  function trySolve(cls) {
-    const pinRules = Object.entries(pinMap(cls)).map(([a, seat]) => ({ type: 'seat', a, seat }));
-    return solve({ students: cls.students, layout: cls.layout, rules: cls.rules.concat(pinRules), across: cls.across, closed: closedOf(cls) });
+  /* Tables that count as the front: the ones ticked on Preferences, or else the nearest row. */
+  function autoFront(cls) {
+    const ts = cls.layout.tables;
+    if (!ts.length) return [];
+    const d = t => ROOM_H - (t.y + t.rows * SH), near = Math.min(...ts.map(d));
+    return ts.filter(t => d(t) - near <= SH).map(t => t.id);
+  }
+  function frontTables(cls) {
+    const ids = new Set(cls.layout.tables.map(t => t.id));
+    const picked = (buildPrefs(cls).frontTables || []).filter(t => ids.has(t));
+    return picked.length ? picked : autoFront(cls);
+  }
+  /* Rules for the whole class: the ones on the Preferences list plus "must be at the front" notes. */
+  function allRules(cls) {
+    const b = buildPrefs(cls), front = frontTables(cls);
+    const fronts = front.length ? Object.entries(b.students).filter(([, p]) => p.front === 'must')
+      .map(([a]) => ({ type: 'tables', a, tables: front, frontNote: true })) : [];
+    return cls.rules.concat(fronts);
+  }
+  /* What Random seating follows. */
+  function randomOpts(b) {
+    return b.random || { pins: true, musts: true, prefs: b.randomUses === 'all' };
+  }
+  /* o.pins / o.musts set to false leave pins or Must rules out. */
+  function trySolve(cls, o = {}) {
+    const pinRules = o.pins === false ? [] : Object.entries(pinMap(cls)).map(([a, seat]) => ({ type: 'seat', a, seat }));
+    const rules = o.musts === false ? [] : allRules(cls);
+    return solve({ students: cls.students, layout: cls.layout, rules: rules.concat(pinRules), across: cls.across, closed: closedOf(cls) });
   }
   function runBuild(cls) {
     if (!cls.students.length) return alert('Add students first (Students tab).');
@@ -460,11 +485,12 @@
   /* The plan for Random seating: Must rules and pins always, plus preferences if that option is on. */
   function randomPlan(cls) {
     if (!cls.students.length) return { ok: false, reason: 'students' };
-    const strict = trySolve(cls);
-    if (!strict.ok || buildPrefs(cls).randomUses !== 'all') return strict;
-    const opts = buildOpts(cls), r = window.SeatBuilder.build(opts);
+    const ro = randomOpts(buildPrefs(cls));
+    const strict = trySolve(cls, ro);
+    if (!strict.ok || !ro.prefs) return strict;
+    const opts = buildOpts(cls, ro), r = window.SeatBuilder.build(opts);
     if (!r.ok) return strict;
-    const mustBroken = window.SeatBuilder.checker(opts)(r.assignment).some(i => i.kind === 'rule' && !i.rule.soft);
+    const mustBroken = ro.musts !== false && window.SeatBuilder.checker(opts)(r.assignment).some(i => i.kind === 'rule' && !i.rule.soft);
     return mustBroken ? strict : r;
   }
 
@@ -724,12 +750,14 @@
     return b;
   }
   const rotationOf = b => b.rotation == null ? 3 : b.rotation;
-  const buildOpts = cls => {
+  const buildOpts = (cls, o = {}) => {
     const b = buildPrefs(cls);
     const plans = []; // rotation is hidden for now; recentPlans(cls, rotationOf(b)) brings it back
     return {
-      students: cls.students, layout: cls.layout, closed: closedOf(cls), rules: cls.rules, across: cls.across,
-      prefs: Object.assign({}, b, { tags: [] }), roomH: ROOM_H, seatH: SH, fixed: pinMap(cls),
+      students: cls.students, layout: cls.layout, closed: closedOf(cls), across: cls.across,
+      rules: o.musts === false ? cls.rules.filter(r => r.soft) : allRules(cls),
+      prefs: Object.assign({}, b, { tags: [] }), roomH: ROOM_H, seatH: SH, fixed: o.pins === false ? {} : pinMap(cls),
+      frontTables: frontTables(cls),
       // The most recent plan counts most.
       recent: plans.map((v, i) => ({ weight: plans.length - i, table: Object.fromEntries(Object.entries(v.assignment).map(([seat, sid]) => [sid, seat.split(':')[0]])) })),
     };
@@ -747,7 +775,8 @@
     const a = studentName(cls, r.a);
     const names = (r.others || []).map(o => studentName(cls, o));
     switch (r.type) {
-      case 'tables': return `${a} sits at ${joinOr(r.tables.map(t => tableName(tableById(cls, t))), 'or')}`;
+      case 'tables': if (r.frontNote) return `${a} sits at a front table`;
+        return `${a} sits at ${joinOr(r.tables.map(t => tableName(tableById(cls, t))), 'or')}`;
       case 'with': return `${a} shares a table with ${joinOr(names, 'or')}`;
       case 'beside': return `${a} sits beside ${joinOr(names, 'or')}`;
       case 'notwith': return `${a} does not share a table with ${joinOr(names, 'or')}`;
@@ -765,31 +794,44 @@
     const sp = id => b.students[id] || (b.students[id] = { friends: [], apart: [], tags: [], front: false });
     const keep = () => { const y = $('stage').scrollTop; save(); render(); $('stage').scrollTop = y; };
     const sorted = cls.students.slice().sort((x, y) => x.name.localeCompare(y.name));
+    const ro = randomOpts(b), front = frontTables(cls);
 
     fill($('sidebar'),
-      h('h3', {}, 'Random seating follows'),
-      h('select', { onchange: e => { b.randomUses = e.target.value; keep(); } },
-        [['musts', 'Must rules and pins only'], ['all', 'Must rules, pins and preferences']]
-          .map(([v, l]) => h('option', { value: v, selected: (b.randomUses || 'musts') === v }, l))),
-      h('p', { class: 'hint' }, b.randomUses === 'all'
-        ? 'Random seating will also try to meet Prefer rules and the notes below, so results look random but lean your way.'
-        : 'Random seating is random apart from your Must rules and pinned students. Prefer rules and notes are only used by Build a plan on the Seats tab.'),
-      h('h3', {}, 'Friends'),
-      h('select', { onchange: e => { b.friends = e.target.value; keep(); } },
-        [['with', 'At least one friend at their table'], ['apart', 'Keep friends at different tables'], ['ignore', 'Ignore friends']]
-          .map(([v, l]) => h('option', { value: v, selected: b.friends === v }, l))),
-      h('p', { class: 'hint' }, 'Friends only need to be at the same table, not next to each other.'),
-      h('h3', {}, '"Sits beside" rules'),
-      h('label', {}, h('input', { type: 'checkbox', checked: cls.across, onchange: e => { cls.across = e.target.checked; keep(); } }),
-        ' Sitting directly across also counts'),
-      h('p', { class: 'hint' }, 'Only affects rules that say "sits beside". Everything else, friends included, is about sharing a table.'),
+      h('h3', {}, 'Building a plan'),
+      h('p', { class: 'hint' }, 'Build a plan (on Seats) always follows pinned students and Must rules, then meets as many preferences as it can.'),
+      h('label', { class: 'field' }, 'Friends',
+        h('select', { onchange: e => { b.friends = e.target.value; keep(); } },
+          [['with', 'At least one friend at their table'], ['beside', 'At least one friend beside them'], ['apart', 'Keep friends at different tables'], ['ignore', 'Ignore friends']]
+            .map(([v, l]) => h('option', { value: v, selected: b.friends === v }, l)))),
+      (b.friends === 'beside' || cls.rules.some(r => r.type === 'beside' || r.type === 'notbeside')) &&
+        h('label', {}, h('input', { type: 'checkbox', checked: cls.across, onchange: e => { cls.across = e.target.checked; keep(); } }),
+          ' "Beside" includes sitting directly across'),
+      h('h3', {}, 'Random seating'),
+      h('p', { class: 'hint' }, 'Random seating follows:'),
+      [['pins', 'Pinned students'], ['musts', 'Must rules'], ['prefs', 'Preferences (friends, Prefer rules, front)']].map(([k, l]) =>
+        h('label', {}, h('input', {
+          type: 'checkbox', checked: ro[k] !== false && (k !== 'prefs' || ro.prefs),
+          onchange: e => { b.random = Object.assign({}, ro, { [k]: e.target.checked }); keep(); },
+        }), ' ' + l)),
+      h('p', { class: 'hint' }, ro.prefs ? 'Results look random but lean towards your preferences.'
+        : ro.musts !== false || ro.pins !== false ? 'Otherwise completely random.' : 'Completely random.'),
+      h('h3', {}, 'Front of the room'),
+      h('p', { class: 'hint' }, 'Tick the tables that count as "the front" for the Front column.'),
+      h('div', { class: 'tablepicks' }, cls.layout.tables.slice().sort((x, y) => x.num - y.num).map(t => h('label', {}, h('input', {
+        type: 'checkbox', checked: front.includes(t.id),
+        onchange: e => {
+          const now = new Set(front); e.target.checked ? now.add(t.id) : now.delete(t.id);
+          b.frontTables = [...now]; keep();
+        },
+      }), ' ' + tableName(t)))),
+      !(b.frontTables || []).length && cls.layout.tables.length && h('p', { class: 'hint' }, 'Picked automatically: the tables nearest the front.'),
     );
 
     if (!cls.students.length) return $('stage').replaceChildren(h('div', { class: 'panel wide' }, h('p', { class: 'muted' }, 'Add students first (Students tab).')));
 
     // ---- rules
     const strict = trySolve(cls);
-    const musts = cls.rules.filter(r => !r.soft).length;
+    const musts = allRules(cls).filter(r => !r.soft).length;
     const status = strict.ok
       ? h('div', { class: 'status ok' }, musts ? 'All Must rules can be met.' : 'No Must rules yet.')
       : h('div', { class: 'status bad' }, strict.reason === 'seats' ? 'There are more students than seats.'
@@ -845,17 +887,20 @@
         h('td', {}, people(p.apart, 6, [s.id, ...p.apart],
           id => { sp(s.id).apart.push(id); if (!sp(id).apart.includes(s.id)) sp(id).apart.push(s.id); },
           id => { sp(s.id).apart = p.apart.filter(x => x !== id); sp(id).apart = sp(id).apart.filter(x => x !== s.id); })),
-        h('td', { class: 'mid' }, h('input', { type: 'checkbox', checked: !!p.front, onchange: e => { sp(s.id).front = e.target.checked; keep(); } })));
+        h('td', {}, h('select', {
+          class: 'frontsel' + (p.front === 'must' ? ' must' : p.front ? ' prefer' : ''),
+          onchange: e => { const v = e.target.value; sp(s.id).front = v === 'must' ? 'must' : v === 'prefer'; keep(); },
+        }, [['', '—'], ['prefer', 'Prefer'], ['must', 'Must']].map(([v, l]) => h('option', { value: v, selected: (p.front === 'must' ? 'must' : p.front ? 'prefer' : '') === v }, l)))));
     });
 
     $('stage').replaceChildren(h('div', { class: 'panel wide' },
       h('h2', {}, 'Rules for ' + cls.name),
-      h('p', { class: 'muted', style: 'margin:0 0 10px' }, 'Must rules are always followed, including by Random seating. Prefer rules are goals that Build a plan works towards. Click a Must or Prefer label to switch it.'),
+      h('p', { class: 'muted', style: 'margin:0 0 10px' }, 'Must rules are always followed by Build a plan, and by Random seating unless you untick that in the sidebar. Prefer rules are goals that Build a plan works towards. Click a Must or Prefer label to switch it.'),
       status, list, ruleForm,
       h('h2', { style: 'margin-top:22px' }, 'Student notes'),
-      h('p', { class: 'muted', style: 'margin:0' }, 'These are preferences. For something that must never happen, add a Must rule above.'),
+      h('p', { class: 'muted', style: 'margin:0' }, 'Friends and keep-away are preferences; for something that must never happen, add a Must rule above. Front of room can be Prefer or Must (for example, for an IEP).'),
       h('table', { class: 'notes' },
-        h('thead', {}, h('tr', {}, ['Student', 'Friends (same table, up to 10)', 'Keep away from', 'Front'].map(x => h('th', {}, x)))),
+        h('thead', {}, h('tr', {}, ['Student', b.friends === 'beside' ? 'Friends (up to 10)' : 'Friends (same table, up to 10)', 'Keep away from', 'Front of room'].map(x => h('th', {}, x)))),
         h('tbody', {}, rows))));
   }
 
@@ -873,7 +918,10 @@
       h('select', { onchange: e => setPref('speed', e.target.value) }, SPEEDS.map(([v, l]) => h('option', { value: v, selected: prefs.speed === v }, l))),
       h('p', { class: 'hint', id: 'randomMsg' }, ''),
       h('p', { class: 'hint' }, 'The board starts empty each time you open this tab. The result becomes the class\'s current plan, so you can adjust it on Seats.'),
-      h('p', { class: 'hint' }, b.randomUses === 'all' ? 'Follows Must rules, pins and preferences.' : 'Follows Must rules and pins.'),
+      (() => {
+        const ro = randomOpts(b), parts = [ro.pins !== false && 'pinned students', ro.musts !== false && 'Must rules', ro.prefs && 'preferences'].filter(Boolean);
+        return h('p', { class: 'hint' }, parts.length ? 'Follows ' + joinOr(parts, 'and') + '. Change this on Preferences.' : 'Completely random. Change this on Preferences.');
+      })(),
     );
     const shown = busy ? p.shown : ui.randomBlank ? {} : cls.assignment;
     const title = h('div', { class: 'rtitle' }, cls.name);

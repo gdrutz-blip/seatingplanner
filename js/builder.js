@@ -27,7 +27,9 @@
     for (const t of tables) dist[t.id] = opts.roomH - (t.y + t.rows * opts.seatH);
     const nearest = Math.min(...tables.map(t => dist[t.id]));
     const far = Math.max(1, ...tables.map(t => dist[t.id] - nearest));
-    const isFront = t => dist[t] - nearest <= opts.seatH;
+    // Front tables are the ones the teacher ticked, or else those within a desk of the nearest table.
+    const frontSet = new Set((opts.frontTables || []).filter(t => t in dist));
+    const isFront = t => frontSet.size ? frontSet.has(t) : dist[t] - nearest <= opts.seatH;
 
     const friends = {}, wantsFront = [], apart = [], seen = new Set();
     for (const s of ids) {
@@ -105,6 +107,7 @@
       if (mode !== 'ignore') for (const s of ids) {
         const mine = friends[s].filter(f => tOf(s) && tOf(f) === tOf(s));
         if (mode === 'with' && friends[s].length && tOf(s) && !mine.length) lonely.push(s);
+        if (mode === 'beside' && friends[s].length && pos[s] && !friends[s].some(f => pos[f] && adj[pos[s]].includes(pos[f]))) lonely.push(s);
         if (mode === 'apart') for (const f of mine) together.push([s, f]);
       }
       cost += W.friend * (lonely.length + together.length);
@@ -145,6 +148,8 @@
       for (const s of wantsFront) if (tOf(s) && !isFront(tOf(s))) out.push({ key: 'f' + s, kind: 'front', who: [s] });
       if (mode === 'with') for (const s of ids)
         if (friends[s].length && tOf(s) && !friends[s].some(f => tOf(f) === tOf(s))) out.push({ key: 'l' + s, kind: 'lonely', who: [s] });
+      if (mode === 'beside') for (const s of ids)
+        if (friends[s].length && pos[s] && !friends[s].some(f => pos[f] && adj[pos[s]].includes(pos[f]))) out.push({ key: 'l' + s, kind: 'lonely', who: [s], beside: true });
       if (mode === 'apart') for (const s of ids) for (const f of friends[s])
         if (tOf(s) && tOf(f) === tOf(s) && !(friends[f].includes(s) && f < s)) out.push({ key: 'p' + [s, f].sort().join(), kind: 'friends', who: [s, f] });
       for (const { tag, who } of tags) {

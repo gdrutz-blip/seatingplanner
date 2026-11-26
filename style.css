@@ -209,3 +209,10 @@ button.big { padding: 12px; font-size: 16px; }
 #pShuffle { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 12px 44px; font-size: 20px; border-radius: 10px; opacity: .9; }
 #pShuffle:hover { opacity: 1; }
 #present { padding-bottom: 70px; }
+#sidebar label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+#sidebar label.field select { width: 100%; color: var(--ink); }
+.tablepicks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.tablepicks label { white-space: nowrap; }
+select.frontsel { padding: 3px 6px; }
+select.frontsel.must { background: #fdecea; border-color: #e3a29b; color: var(--warn); font-weight: 600; }
+select.frontsel.prefer { background: #e4ecff; border-color: #a9bdf0; color: var(--accent); }
