@@ -366,7 +366,7 @@
       friendLine,
       check && (current.length
         ? h('ul', { class: 'checks' }, current.map(i => h('li', {}, issueText(cls, i))))
-        : h('p', { class: 'hint' }, hasNotes ? 'Every rule and note is met.' : 'Nothing to check yet. Add rules and notes on the Preferences tab.')),
+        : h('p', { class: 'hint' }, hasNotes ? 'Every Must rule and preference is met.' : 'Nothing to check yet. Add Must rules or preferences on the Preferences tab.')),
       check && h('p', { class: 'hint' }, 'While you move a student, seats turn red if they would break something and green if they would fix something.'),
       h('h3', {}, `Not seated (${unseated.length})`), chips,
       h('p', { class: 'hint' }, 'Drag a name onto a seat, or click a name and then a seat. Drop one student on another to swap them.'),
@@ -901,11 +901,16 @@
     });
 
     $('stage').replaceChildren(h('div', { class: 'panel wide' },
-      h('h2', {}, 'Rules for ' + cls.name),
+      h('h2', {}, 'Must and Prefer rules'),
       h('p', { class: 'muted', style: 'margin:0 0 10px' }, 'Must rules are always followed by Build a plan, and by Random seating unless you untick that in the sidebar. Prefer rules are goals that Build a plan works towards. Click a Must or Prefer label to switch it.'),
       status, list, ruleForm,
-      h('h2', { style: 'margin-top:22px' }, 'Front of the room'),
-      h('p', { class: 'muted', style: 'margin:0 0 6px' }, 'Tick the tables that count as "the front" for the Front of room column below.' +
+      h('h2', { style: 'margin-top:22px' }, 'Student preferences'),
+      h('p', { class: 'muted', style: 'margin:0' }, 'Friends and keep-away are preferences; for something that must never happen, add a Must rule above. Front of room can be Prefer or Must (for example, for an IEP).'),
+      h('table', { class: 'notes' },
+        h('thead', {}, h('tr', {}, ['Student', b.friends === 'beside' ? 'Friends (up to 10)' : 'Friends (same table, up to 10)', 'Keep away from', 'Front of room'].map(x => h('th', {}, x)))),
+        h('tbody', {}, rows)),
+      h('h3', { class: 'subhead' }, 'Which tables count as the front?'),
+      h('p', { class: 'muted', style: 'margin:0 0 6px' }, 'Used by the Front of room column above.' +
         ((b.frontTables || []).length ? '' : ' Picked automatically for now: the tables nearest the front.')),
       h('div', { class: 'tablepicks' }, cls.layout.tables.slice().sort((x, y) => x.num - y.num).map(t => h('label', {}, h('input', {
         type: 'checkbox', checked: front.includes(t.id),
@@ -913,12 +918,7 @@
           const now = new Set(front); e.target.checked ? now.add(t.id) : now.delete(t.id);
           b.frontTables = [...now]; keep();
         },
-      }), ' ' + tableName(t)))),
-      h('h2', { style: 'margin-top:22px' }, 'Student notes'),
-      h('p', { class: 'muted', style: 'margin:0' }, 'Friends and keep-away are separate preferences; for something that must never happen, add a Must rule above. Front of room can be Prefer or Must (for example, for an IEP).'),
-      h('table', { class: 'notes' },
-        h('thead', {}, h('tr', {}, ['Student', b.friends === 'beside' ? 'Friends (up to 10)' : 'Friends (same table, up to 10)', 'Keep away from', 'Front of room'].map(x => h('th', {}, x)))),
-        h('tbody', {}, rows))));
+      }), ' ' + tableName(t))))));
   }
 
   /* ---------------- random seating tab ---------------- */

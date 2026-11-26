@@ -216,3 +216,4 @@ button.big { padding: 12px; font-size: 16px; }
 select.frontsel { padding: 3px 6px; }
 select.frontsel.must { background: #fdecea; border-color: #e3a29b; color: var(--warn); font-weight: 600; }
 select.frontsel.prefer { background: #e4ecff; border-color: #a9bdf0; color: var(--accent); }
+.panel h3.subhead { margin: 18px 0 4px; font-size: 14px; }
