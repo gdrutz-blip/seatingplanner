@@ -190,3 +190,17 @@ ul.checks li { background: #fff1e0; border-radius: 6px; padding: 5px 8px; font-s
 .movenote[hidden] { display: none; }
 .movenote .bad { color: var(--warn); }
 .movenote .good { color: var(--ok); }
+
+/* ---------- preferences / seats / random seating ---------- */
+.mode-close .seat { pointer-events: auto; cursor: pointer; }
+.mode-close .seat:hover > div { border-color: var(--accent); }
+.mode-close .table { cursor: default; }
+.rulelist .strength { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; flex: none; min-width: 64px; }
+.strength.must { background: #fdecea; border-color: #e3a29b; color: var(--warn); }
+.strength.prefer { background: #e4ecff; border-color: #a9bdf0; color: var(--accent); }
+.ruleform label input[type=number] { width: 56px; }
+.ruleform select { max-width: 100%; }
+p.summary { margin: 0; padding: 6px 8px; border-radius: 6px; background: #e7f6ee; color: var(--ok); font-size: 12.5px; font-weight: 600; }
+button.big { padding: 12px; font-size: 16px; }
+.randombox { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.rtitle { font-size: 24px; font-weight: 800; }

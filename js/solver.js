@@ -94,7 +94,14 @@
     const domain = {};
     const restricted = new Set();
     const rel = [];
+    // Only "must" rules apply here; "prefer" rules (soft) are left to the plan builder.
     for (const r of opts.rules || []) {
+      if (r.soft) continue;
+      if (r.type === 'atmost') {
+        const group = (r.group || []).filter(s => valid.has(s));
+        if (group.length > (r.max || 1)) rel.push({ type: 'atmost', group, max: r.max || 1 });
+        continue;
+      }
       if (!valid.has(r.a)) continue;
       if (r.type === 'tables') {
         const ts = (r.tables || []).filter(t => tableIds.has(t));
@@ -118,6 +125,10 @@
     const find = x => (parent[x] === undefined || parent[x] === x) ? x : (parent[x] = find(parent[x]));
     const constrained = new Set(restricted);
     for (const r of rel) {
+      if (r.type === 'atmost') {
+        for (const s of r.group) { constrained.add(s); parent[find(s)] = find(r.group[0]); }
+        continue;
+      }
       constrained.add(r.a);
       for (const o of r.others) { constrained.add(o); parent[find(o)] = find(r.a); }
     }
@@ -125,6 +136,11 @@
     const pos = {}, occ = {}, freeInTable = {};
     function relOk() {
       for (const r of rel) {
+        if (r.type === 'atmost') {
+          const per = {};
+          for (const s of r.group) if (pos[s] && (per[tableOf[pos[s]]] = (per[tableOf[pos[s]]] || 0) + 1) > r.max) return false;
+          continue;
+        }
         const pa = pos[r.a];
         if (!pa) continue;
         const neg = r.type === 'notwith' || r.type === 'notbeside';

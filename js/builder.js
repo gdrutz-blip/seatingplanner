@@ -5,7 +5,7 @@
   'use strict';
   const G = typeof module !== 'undefined' && module.exports ? require('./solver.js') : root.SeatSolver;
 
-  const W = { rule: 1000, apart: 300, front: 40, friend: 20, max: 25, spread: 8, even: 10, repeat: 4 };
+  const W = { rule: 1000, prefer: 150, apart: 300, front: 40, friend: 20, max: 25, spread: 8, even: 10, repeat: 4 };
 
   /* opts: { students:[{id,name}], layout, closed, rules, across, prefs, roomH, seatH, fixed, recent }
      fixed: { studentId: seatId } for pinned students, who are never moved.
@@ -40,13 +40,14 @@
       }
     }
     const tags = (prefs.tags || []).map(t => ({ tag: t, who: ids.filter(s => ((P[s] || {}).tags || []).includes(t.id)) }));
-    const rules = (opts.rules || []).filter(r => valid.has(r.a));
+    const rules = (opts.rules || []).filter(r => r.type === 'atmost'
+      ? (r.group || []).filter(x => valid.has(x)).length > (r.max || 1) : valid.has(r.a));
 
     // Pinned students, plus hidden "stays in their seat" rules, are fixed in place.
     const fixed = {}, taken = new Set();
     const fix = (s, seat) => { if (valid.has(s) && seat in tableOf && !fixed[s] && !taken.has(seat)) { fixed[s] = seat; taken.add(seat); } };
     for (const [s, seat] of Object.entries(opts.fixed || {})) fix(s, seat);
-    for (const r of rules) if (r.type === 'seat') fix(r.a, r.seat);
+    for (const r of rules) if (r.type === 'seat' && !r.soft) fix(r.a, r.seat);
 
     // Rotation: a weight for every pair who shared a table in a recent plan.
     const n = ids.length, idx = {};
@@ -61,6 +62,11 @@
     }
 
     function ruleBroken(r, pos) {
+      if (r.type === 'atmost') {
+        const per = {};
+        for (const s of r.group) if (pos[s] && (per[tableOf[pos[s]]] = (per[tableOf[pos[s]]] || 0) + 1) > (r.max || 1)) return true;
+        return false;
+      }
       const pa = pos[r.a];
       if (!pa) return false;
       if (r.type === 'tables') return !r.tables.includes(tableOf[pa]);
@@ -87,7 +93,7 @@
       for (const t of tables) cost += W.even * (count[t.id] || 0) ** 2;
 
       const brokenRules = rules.filter(r => ruleBroken(r, pos));
-      cost += W.rule * brokenRules.length;
+      for (const r of brokenRules) cost += r.soft ? W.prefer : W.rule;
 
       const brokenApart = apart.filter(([a, b]) => tOf(a) && tOf(a) === tOf(b));
       cost += W.apart * brokenApart.length;
@@ -125,7 +131,7 @@
           friend: { asked: withFriends.length, lonely, together },
           apart: { total: apart.length, broken: brokenApart },
           front: { total: wantsFront.length, missed: frontMissed },
-          tags: tagRows, rules: { total: rules.length, broken: brokenRules.length },
+          tags: tagRows, rules: { total: rules.length, broken: brokenRules.length, mustBroken: brokenRules.filter(r => !r.soft).length },
           repeat: { plans: recent.length, pairs: repeats.sort((a, b) => b[2] - a[2]) },
         },
       };
@@ -134,7 +140,7 @@
     function issues(pos) {
       const tOf = s => pos[s] ? tableOf[pos[s]] : null;
       const out = [];
-      rules.forEach((r, i) => { if (ruleBroken(r, pos)) out.push({ key: 'r' + i, kind: 'rule', rule: r, who: [r.a] }); });
+      rules.forEach((r, i) => { if (ruleBroken(r, pos)) out.push({ key: 'r' + i, kind: 'rule', rule: r, who: r.type === 'atmost' ? r.group.filter(x => pos[x]) : [r.a] }); });
       for (const [a, b] of apart) if (tOf(a) && tOf(a) === tOf(b)) out.push({ key: 'a' + a + b, kind: 'apart', who: [a, b] });
       for (const s of wantsFront) if (tOf(s) && !isFront(tOf(s))) out.push({ key: 'f' + s, kind: 'front', who: [s] });
       if (mode === 'with') for (const s of ids)

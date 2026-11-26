@@ -21,10 +21,11 @@
   <input type="file" id="fileRestore" accept="application/json,.json" hidden>
 </header>
 <nav>
-  <button data-tab="seating">Seating</button>
-  <button data-tab="layout">Desk layout</button>
   <button data-tab="students">Students</button>
-  <button data-tab="build">Build a plan</button>
+  <button data-tab="layout">Desks</button>
+  <button data-tab="prefs">Preferences</button>
+  <button data-tab="seating">Seats</button>
+  <button data-tab="random">Random seating</button>
   <button data-tab="history">History</button>
   <button data-tab="print">Print / PDF</button>
   <span class="spacer"></span>
@@ -70,16 +71,8 @@
   </div>
 </div>
 
-<dialog id="rulesDialog">
-  <form method="dialog" class="dlghead">
-    <h2>Seating rules</h2>
-    <button>Close</button>
-  </form>
-  <div id="rulesBody"></div>
-</dialog>
-
-<script src="js/solver.js?v=9"></script>
-<script src="js/builder.js?v=9"></script>
-<script src="js/app.js?v=9"></script>
+<script src="js/solver.js?v=10"></script>
+<script src="js/builder.js?v=10"></script>
+<script src="js/app.js?v=10"></script>
 </body>
 </html>
