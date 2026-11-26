@@ -776,11 +776,13 @@
         : 'Random seating is random apart from your Must rules and pinned students. Prefer rules and notes are only used by Build a plan on the Seats tab.'),
       h('h3', {}, 'Friends'),
       h('select', { onchange: e => { b.friends = e.target.value; keep(); } },
-        [['with', 'Seat everyone with at least one friend'], ['apart', 'Keep friends at different tables'], ['ignore', 'Ignore friends']]
+        [['with', 'At least one friend at their table'], ['apart', 'Keep friends at different tables'], ['ignore', 'Ignore friends']]
           .map(([v, l]) => h('option', { value: v, selected: b.friends === v }, l))),
-      h('h3', {}, '"Beside"'),
+      h('p', { class: 'hint' }, 'Friends only need to be at the same table, not next to each other.'),
+      h('h3', {}, '"Sits beside" rules'),
       h('label', {}, h('input', { type: 'checkbox', checked: cls.across, onchange: e => { cls.across = e.target.checked; keep(); } }),
         ' Sitting directly across also counts'),
+      h('p', { class: 'hint' }, 'Only affects rules that say "sits beside". Everything else, friends included, is about sharing a table.'),
     );
 
     if (!cls.students.length) return $('stage').replaceChildren(h('div', { class: 'panel wide' }, h('p', { class: 'muted' }, 'Add students first (Students tab).')));
@@ -853,7 +855,7 @@
       h('h2', { style: 'margin-top:22px' }, 'Student notes'),
       h('p', { class: 'muted', style: 'margin:0' }, 'These are preferences. For something that must never happen, add a Must rule above.'),
       h('table', { class: 'notes' },
-        h('thead', {}, h('tr', {}, ['Student', 'Friends (up to 10)', 'Keep away from', 'Front'].map(x => h('th', {}, x)))),
+        h('thead', {}, h('tr', {}, ['Student', 'Friends (same table, up to 10)', 'Keep away from', 'Front'].map(x => h('th', {}, x)))),
         h('tbody', {}, rows))));
   }
 
