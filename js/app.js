@@ -462,9 +462,16 @@
     return cls.rules.concat(fronts);
   }
   /* What Random seating follows. */
+  /* What Random seating follows: pins, musts, and three kinds of preference. */
   function randomOpts(b) {
-    return b.random || { pins: true, musts: true, prefs: b.randomUses === 'all' };
+    const r = Object.assign({ pins: true, musts: true }, b.random || {});
+    const old = b.random && 'prefs' in b.random ? !!b.random.prefs : b.randomUses === 'all';
+    for (const k of ['friends', 'front', 'prefer']) if (!(k in r)) r[k] = old;
+    delete r.prefs;
+    return r;
   }
+  // Prefer rules only count when the class has some.
+  const leansOnPrefs = (ro, cls) => ro.friends || ro.front || (ro.prefer && cls.rules.some(r => r.soft));
   /* o.pins / o.musts set to false leave pins or Must rules out. */
   function trySolve(cls, o = {}) {
     const pinRules = o.pins === false ? [] : Object.entries(pinMap(cls)).map(([a, seat]) => ({ type: 'seat', a, seat }));
@@ -487,7 +494,7 @@
     if (!cls.students.length) return { ok: false, reason: 'students' };
     const ro = randomOpts(buildPrefs(cls));
     const strict = trySolve(cls, ro);
-    if (!strict.ok || !ro.prefs) return strict;
+    if (!strict.ok || !leansOnPrefs(ro, cls)) return strict;
     const opts = buildOpts(cls, ro), r = window.SeatBuilder.build(opts);
     if (!r.ok) return strict;
     const mustBroken = ro.musts !== false && window.SeatBuilder.checker(opts)(r.assignment).some(i => i.kind === 'rule' && !i.rule.soft);
@@ -751,12 +758,20 @@
   }
   const rotationOf = b => b.rotation == null ? 3 : b.rotation;
   const buildOpts = (cls, o = {}) => {
-    const b = buildPrefs(cls);
+    const b0 = buildPrefs(cls);
+    // Leave out any kind of preference that o switches off (Build a plan passes nothing, so uses all).
+    const b = Object.assign({}, b0, { tags: [], students: {} });
+    if (o.friends === false) b.friends = 'ignore';
+    for (const [id, p] of Object.entries(b0.students)) b.students[id] = Object.assign({}, p, {
+      apart: o.friends === false ? [] : p.apart,
+      front: p.front === 'must' ? (o.musts === false ? false : 'must') : o.front === false ? false : p.front,
+    });
+    let rules = o.musts === false ? cls.rules.filter(r => r.soft) : allRules(cls);
+    if (o.prefer === false) rules = rules.filter(r => !r.soft);
     const plans = []; // rotation is hidden for now; recentPlans(cls, rotationOf(b)) brings it back
     return {
       students: cls.students, layout: cls.layout, closed: closedOf(cls), across: cls.across,
-      rules: o.musts === false ? cls.rules.filter(r => r.soft) : allRules(cls),
-      prefs: Object.assign({}, b, { tags: [] }), roomH: ROOM_H, seatH: SH, fixed: o.pins === false ? {} : pinMap(cls),
+      rules, prefs: b, roomH: ROOM_H, seatH: SH, fixed: o.pins === false ? {} : pinMap(cls),
       frontTables: frontTables(cls),
       // The most recent plan counts most.
       recent: plans.map((v, i) => ({ weight: plans.length - i, table: Object.fromEntries(Object.entries(v.assignment).map(([seat, sid]) => [sid, seat.split(':')[0]])) })),
@@ -808,23 +823,14 @@
           ' "Beside" includes sitting directly across'),
       h('h3', {}, 'Random seating'),
       h('p', { class: 'hint' }, 'Random seating follows:'),
-      [['pins', 'Pinned students'], ['musts', 'Must rules'], ['prefs', 'Preferences (friends, Prefer rules, front)']].map(([k, l]) =>
+      [['pins', 'Pinned students'], ['musts', 'Must rules'], ['friends', 'Friend preferences (and keep-away)'], ['front', 'Front-of-room preferences'],
+        cls.rules.some(r => r.soft) && ['prefer', 'Prefer rules']].filter(Boolean).map(([k, l]) =>
         h('label', {}, h('input', {
-          type: 'checkbox', checked: ro[k] !== false && (k !== 'prefs' || ro.prefs),
+          type: 'checkbox', checked: !!ro[k],
           onchange: e => { b.random = Object.assign({}, ro, { [k]: e.target.checked }); keep(); },
         }), ' ' + l)),
-      h('p', { class: 'hint' }, ro.prefs ? 'Results look random but lean towards your preferences.'
-        : ro.musts !== false || ro.pins !== false ? 'Otherwise completely random.' : 'Completely random.'),
-      h('h3', {}, 'Front of the room'),
-      h('p', { class: 'hint' }, 'Tick the tables that count as "the front" for the Front column.'),
-      h('div', { class: 'tablepicks' }, cls.layout.tables.slice().sort((x, y) => x.num - y.num).map(t => h('label', {}, h('input', {
-        type: 'checkbox', checked: front.includes(t.id),
-        onchange: e => {
-          const now = new Set(front); e.target.checked ? now.add(t.id) : now.delete(t.id);
-          b.frontTables = [...now]; keep();
-        },
-      }), ' ' + tableName(t)))),
-      !(b.frontTables || []).length && cls.layout.tables.length && h('p', { class: 'hint' }, 'Picked automatically: the tables nearest the front.'),
+      h('p', { class: 'hint' }, leansOnPrefs(ro, cls) ? 'Results look random but lean towards the ticked preferences.'
+        : ro.musts || ro.pins ? 'Otherwise completely random.' : 'Completely random.'),
     );
 
     if (!cls.students.length) return $('stage').replaceChildren(h('div', { class: 'panel wide' }, h('p', { class: 'muted' }, 'Add students first (Students tab).')));
@@ -897,6 +903,16 @@
       h('h2', {}, 'Rules for ' + cls.name),
       h('p', { class: 'muted', style: 'margin:0 0 10px' }, 'Must rules are always followed by Build a plan, and by Random seating unless you untick that in the sidebar. Prefer rules are goals that Build a plan works towards. Click a Must or Prefer label to switch it.'),
       status, list, ruleForm,
+      h('h2', { style: 'margin-top:22px' }, 'Front of the room'),
+      h('p', { class: 'muted', style: 'margin:0 0 6px' }, 'Tick the tables that count as "the front" for the Front of room column below.' +
+        ((b.frontTables || []).length ? '' : ' Picked automatically for now: the tables nearest the front.')),
+      h('div', { class: 'tablepicks' }, cls.layout.tables.slice().sort((x, y) => x.num - y.num).map(t => h('label', {}, h('input', {
+        type: 'checkbox', checked: front.includes(t.id),
+        onchange: e => {
+          const now = new Set(front); e.target.checked ? now.add(t.id) : now.delete(t.id);
+          b.frontTables = [...now]; keep();
+        },
+      }), ' ' + tableName(t)))),
       h('h2', { style: 'margin-top:22px' }, 'Student notes'),
       h('p', { class: 'muted', style: 'margin:0' }, 'Friends and keep-away are preferences; for something that must never happen, add a Must rule above. Front of room can be Prefer or Must (for example, for an IEP).'),
       h('table', { class: 'notes' },
@@ -919,7 +935,8 @@
       h('p', { class: 'hint', id: 'randomMsg' }, ''),
       h('p', { class: 'hint' }, 'The board starts empty each time you open this tab. The result becomes the class\'s current plan, so you can adjust it on Seats.'),
       (() => {
-        const ro = randomOpts(b), parts = [ro.pins !== false && 'pinned students', ro.musts !== false && 'Must rules', ro.prefs && 'preferences'].filter(Boolean);
+        const ro = randomOpts(b), parts = [ro.pins && 'pinned students', ro.musts && 'Must rules', ro.friends && 'friend preferences',
+          ro.front && 'front-of-room preferences', ro.prefer && cls.rules.some(r => r.soft) && 'Prefer rules'].filter(Boolean);
         return h('p', { class: 'hint' }, parts.length ? 'Follows ' + joinOr(parts, 'and') + '. Change this on Preferences.' : 'Completely random. Change this on Preferences.');
       })(),
     );
