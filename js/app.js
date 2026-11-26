@@ -522,14 +522,8 @@
       h('div', { class: 'row' },
         h('button', { onclick: () => addTable(4, 2) }, 'Group of 4'),
         h('button', { onclick: () => addTable(6, 2) }, 'Group of 6')),
-      h('div', { class: 'row' },
-        h('button', { onclick: () => addItem('desk', 'Teacher', 4, 2) }, 'Teacher desk'),
-        h('button', { onclick: () => addItem('door', 'Door', 3, 1) }, 'Door')),
-      h('div', { class: 'row' },
-        h('button', { onclick: () => addItem('window', 'Window', 6, 1) }, 'Window'),
-        h('button', { onclick: () => addItem('board', 'Board', 8, 1) }, 'Board')),
-      h('button', { onclick: () => addItem('label', 'Label', 4, 1) }, 'Other label'),
-      h('p', { class: 'hint' }, 'Drag anything to move it. Click it to select it, then change it below.'),
+      h('button', { onclick: () => addItem('label', 'Label', 4, 1) }, 'Add a label'),
+      h('p', { class: 'hint' }, 'Labels mark anything else in the room, such as the door or your desk. Drag anything to move it; click it to rename, resize or rotate it.'),
       it && [
         h('h3', {}, 'Selected: ' + it.text),
         h('input', { type: 'text', value: it.text, maxlength: 30, onchange: ev => { it.text = ev.target.value.trim() || it.text; changed(); } }),
@@ -938,6 +932,7 @@
     pres = { flip: true, shown: blank ? {} : null, busy: false, skip: false };
     $('present').hidden = false;
     $('presentMsg').textContent = '';
+    $('pShuffle').textContent = 'Shuffle';
     renderPresent();
     const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
     if (p && p.catch) p.catch(() => {});
@@ -956,7 +951,7 @@
     $('presentTitle').textContent = cls.name;
     const wrap = renderRoom(cls, { flip: pres.flip, mode: 'view', crop: true, assignment: pres.shown || cls.assignment });
     $('presentStage').replaceChildren(wrap);
-    fit(wrap, window.innerWidth - 40, window.innerHeight - 110);
+    fit(wrap, window.innerWidth - 40, window.innerHeight - 180);
   }
   const pick = a => a[Math.floor(Math.random() * a.length)];
   /* Each animation only reveals a result that has already been decided and saved.
@@ -1066,8 +1061,10 @@
     const r = randomPlan(cls);
     if (!r.ok) { $('presentMsg').textContent = 'Shuffle isn\'t available right now.'; return; }
     p.shown = {}; renderPresent();
+    $('pShuffle').textContent = 'Skip';
     await reveal(cls, r.assignment, p, { root: $('presentStage'), title: $('presentTitle') });
     ui.randomBlank = false;
+    $('pShuffle').textContent = 'Shuffle';
     if (pres === p) renderPresent();
   }
   for (const [id, key] of [['pStyle', 'style'], ['pSpeed', 'speed']]) {
