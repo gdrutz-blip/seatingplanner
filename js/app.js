@@ -467,11 +467,12 @@
     const r = Object.assign({ pins: true, musts: true }, b.random || {});
     const old = b.random && 'prefs' in b.random ? !!b.random.prefs : b.randomUses === 'all';
     for (const k of ['friends', 'front', 'prefer']) if (!(k in r)) r[k] = old;
+    if (!('apart' in r)) r.apart = r.friends; // keep-away used to share the friends box
     delete r.prefs;
     return r;
   }
   // Prefer rules only count when the class has some.
-  const leansOnPrefs = (ro, cls) => ro.friends || ro.front || (ro.prefer && cls.rules.some(r => r.soft));
+  const leansOnPrefs = (ro, cls) => ro.friends || ro.apart || ro.front || (ro.prefer && cls.rules.some(r => r.soft));
   /* o.pins / o.musts set to false leave pins or Must rules out. */
   function trySolve(cls, o = {}) {
     const pinRules = o.pins === false ? [] : Object.entries(pinMap(cls)).map(([a, seat]) => ({ type: 'seat', a, seat }));
@@ -763,7 +764,7 @@
     const b = Object.assign({}, b0, { tags: [], students: {} });
     if (o.friends === false) b.friends = 'ignore';
     for (const [id, p] of Object.entries(b0.students)) b.students[id] = Object.assign({}, p, {
-      apart: o.friends === false ? [] : p.apart,
+      apart: o.apart === false ? [] : p.apart,
       front: p.front === 'must' ? (o.musts === false ? false : 'must') : o.front === false ? false : p.front,
     });
     let rules = o.musts === false ? cls.rules.filter(r => r.soft) : allRules(cls);
@@ -823,7 +824,7 @@
           ' "Beside" includes sitting directly across'),
       h('h3', {}, 'Random seating'),
       h('p', { class: 'hint' }, 'Random seating follows:'),
-      [['pins', 'Pinned students'], ['musts', 'Must rules'], ['friends', 'Friend preferences (and keep-away)'], ['front', 'Front-of-room preferences'],
+      [['pins', 'Pinned students'], ['musts', 'Must rules'], ['friends', 'Friend preferences'], ['apart', 'Keep-away preferences'], ['front', 'Front-of-room preferences'],
         cls.rules.some(r => r.soft) && ['prefer', 'Prefer rules']].filter(Boolean).map(([k, l]) =>
         h('label', {}, h('input', {
           type: 'checkbox', checked: !!ro[k],
@@ -914,7 +915,7 @@
         },
       }), ' ' + tableName(t)))),
       h('h2', { style: 'margin-top:22px' }, 'Student notes'),
-      h('p', { class: 'muted', style: 'margin:0' }, 'Friends and keep-away are preferences; for something that must never happen, add a Must rule above. Front of room can be Prefer or Must (for example, for an IEP).'),
+      h('p', { class: 'muted', style: 'margin:0' }, 'Friends and keep-away are separate preferences; for something that must never happen, add a Must rule above. Front of room can be Prefer or Must (for example, for an IEP).'),
       h('table', { class: 'notes' },
         h('thead', {}, h('tr', {}, ['Student', b.friends === 'beside' ? 'Friends (up to 10)' : 'Friends (same table, up to 10)', 'Keep away from', 'Front of room'].map(x => h('th', {}, x)))),
         h('tbody', {}, rows))));
@@ -935,7 +936,7 @@
       h('p', { class: 'hint', id: 'randomMsg' }, ''),
       h('p', { class: 'hint' }, 'The board starts empty each time you open this tab. The result becomes the class\'s current plan, so you can adjust it on Seats.'),
       (() => {
-        const ro = randomOpts(b), parts = [ro.pins && 'pinned students', ro.musts && 'Must rules', ro.friends && 'friend preferences',
+        const ro = randomOpts(b), parts = [ro.pins && 'pinned students', ro.musts && 'Must rules', ro.friends && 'friend preferences', ro.apart && 'keep-away preferences',
           ro.front && 'front-of-room preferences', ro.prefer && cls.rules.some(r => r.soft) && 'Prefer rules'].filter(Boolean);
         return h('p', { class: 'hint' }, parts.length ? 'Follows ' + joinOr(parts, 'and') + '. Change this on Preferences.' : 'Completely random. Change this on Preferences.');
       })(),
