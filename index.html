@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Seating Planner</title>
-<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
 <header>
@@ -18,6 +18,15 @@
   <span id="backupNote"></span>
   <button id="btnBackup" title="Download all classes as a backup file">Backup</button>
   <button id="btnRestore" title="Load a backup file">Restore</button>
+  <!-- Links to the other teacher tools. Keep in step with https://gdrutz-blip.github.io/random/tools.json -->
+  <details class="more-menu" id="moreMenu">
+    <summary title="Other teacher tools">More tools ▾</summary>
+    <div class="more-menu-body">
+      <div class="more-menu-head">More teacher tools</div>
+      <a href="https://gdrutz-blip.github.io/random/" target="_blank" rel="noopener">Randomizer</a>
+      <a href="https://gdrutz-blip.github.io/math-strings/" target="_blank" rel="noopener">Math Strings</a>
+    </div>
+  </details>
   <input type="file" id="fileRestore" accept="application/json,.json" hidden>
 </header>
 <nav>
@@ -38,14 +47,6 @@
   <aside id="sidebar"></aside>
   <section id="stage"></section>
 </main>
-<!-- Links to the other tools. Keep in step with https://gdrutz-blip.github.io/random/tools.json -->
-<footer class="more-tools">
-  <span>More from Mr. Drutz:</span>
-  <a href="https://gdrutz-blip.github.io/random/" target="_blank" rel="noopener">Randomizer</a>
-  <a href="https://gdrutz-blip.github.io/math-strings/" target="_blank" rel="noopener">Math Strings</a>
-  <a href="https://gdrutz-blip.github.io/drama-generator/" target="_blank" rel="noopener">Drama Scene Builder</a>
-  <a href="https://gdrutz-blip.github.io/G8MES/" target="_blank" rel="noopener">G8MES</a>
-</footer>
 
 <div id="present" hidden>
   <div id="presentTitle"></div>
@@ -74,5 +75,13 @@
 <script src="js/solver.js?v=17"></script>
 <script src="js/builder.js?v=17"></script>
 <script src="js/app.js?v=17"></script>
+<script>
+  // close the "More tools" menu when you click elsewhere or press Esc
+  (function () {
+    var m = document.getElementById('moreMenu');
+    document.addEventListener('click', function (e) { if (m.open && !m.contains(e.target)) m.open = false; });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') m.open = false; });
+  })();
+</script>
 </body>
 </html>

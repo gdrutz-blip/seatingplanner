@@ -23,9 +23,6 @@ nav button[data-tab].active { color: var(--accent); background: var(--accent-sof
 .viewtoggle { color: var(--muted); display: flex; gap: 5px; align-items: center; }
 
 main { flex: 1; display: flex; min-height: 0; }
-.more-tools { flex: none; display: flex; flex-wrap: wrap; gap: 2px 14px; justify-content: center; padding: 6px 14px; background: var(--panel); border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
-.more-tools a { color: var(--muted); text-underline-offset: 3px; }
-.more-tools a:hover { color: var(--accent); }
 #sidebar { width: 260px; flex: none; background: var(--panel); border-right: 1px solid var(--line); padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
 #sidebar h3 { margin: 6px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 #sidebar .hint { color: var(--muted); font-size: 12.5px; margin: 0; }
@@ -82,7 +79,7 @@ main { flex: 1; display: flex; min-height: 0; }
 
 @page { size: portrait; margin: .4in; }
 @media print {
-  header, nav, #sidebar, #present, dialog, .more-tools { display: none !important; }
+  header, nav, #sidebar, #present, dialog { display: none !important; }
   html, body { height: auto; background: #fff; }
   body, main, #stage, .pages { display: block; padding: 0; overflow: visible; }
   .page { box-shadow: none; margin: 0 auto; break-after: page; break-inside: avoid; }
@@ -217,3 +214,13 @@ select.frontsel { padding: 3px 6px; }
 select.frontsel.must { background: #fdecea; border-color: #e3a29b; color: var(--warn); font-weight: 600; }
 select.frontsel.prefer { background: #e4ecff; border-color: #a9bdf0; color: var(--accent); }
 .panel h3.subhead { margin: 18px 0 4px; font-size: 14px; }
+
+/* "More tools" menu in the top bar: links to the other teacher tools */
+.more-menu { position: relative; }
+.more-menu > summary { list-style: none; cursor: pointer; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--muted); }
+.more-menu > summary::-webkit-details-marker { display: none; }
+.more-menu > summary:hover, .more-menu[open] > summary { background: #f0f2f6; color: var(--ink); }
+.more-menu-body { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 190px; display: grid; gap: 2px; padding: 6px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(20, 30, 50, .16); }
+.more-menu-head { padding: 4px 10px 2px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.more-menu-body a { padding: 7px 10px; border-radius: 6px; color: var(--ink); text-decoration: none; }
+.more-menu-body a:hover { background: var(--accent-soft); }
